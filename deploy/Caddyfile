@@ -1,0 +1,91 @@
+# Caddy reverse proxy configuration for same-origin deployment
+
+# Development environment: localhost:8080
+:8080 {
+  # Enable debug logs for troubleshooting
+  log {
+    level debug
+  }
+
+  # Lobby frontend (root path)
+  handle / {
+    reverse_proxy localhost:5175 {
+      # Preserve original host header for frontend
+      header_up Host {http.request.host}
+      # Handle WebSocket if needed
+      transport http {
+        read_timeout 30s
+        write_timeout 30s
+      }
+    }
+  }
+
+  # Auth frontend
+  handle /login* {
+    reverse_proxy localhost:5173 {
+      header_up Host {http.request.host}
+    }
+  }
+
+  # Character frontend
+  handle /character* {
+    reverse_proxy localhost:5174 {
+      header_up Host {http.request.host}
+    }
+  }
+
+  # Chat frontend
+  handle /chat* {
+    reverse_proxy localhost:5176 {
+      header_up Host {http.request.host}
+    }
+  }
+
+  # API Gateway (all /api/* requests)
+  handle /api/* {
+    reverse_proxy gateway:8000 {
+      header_up Host {http.request.host}
+      header_up X-Forwarded-For {http.request.header.X-Forwarded-For}
+      header_up X-Forwarded-Proto {http.request.proto}
+    }
+  }
+
+  # Catch-all for SPA routing: return index.html for unknown paths
+  @notapi {
+    not path /api/*
+    file {
+      try_files {path} /index.html
+    }
+  }
+  rewrite @notapi {path}
+}
+
+# Production environment placeholder (uncomment and update domain)
+# persona-nexus.com {
+#   log {
+#     level info
+#   }
+#
+#   # HTTPS will be automatic with Let's Encrypt
+#   encode gzip
+#
+#   handle / {
+#     reverse_proxy localhost:5175
+#   }
+#
+#   handle /login* {
+#     reverse_proxy localhost:5173
+#   }
+#
+#   handle /character* {
+#     reverse_proxy localhost:5174
+#   }
+#
+#   handle /chat* {
+#     reverse_proxy localhost:5176
+#   }
+#
+#   handle /api/* {
+#     reverse_proxy gateway:8000
+#   }
+# }

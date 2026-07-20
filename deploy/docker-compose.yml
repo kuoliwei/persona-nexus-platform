@@ -1,0 +1,176 @@
+services:
+  # Caddy reverse proxy - single entry point
+  caddy:
+    image: caddy:2-alpine
+    container_name: caddy-proxy
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+    networks:
+      - nexus-network
+    depends_on:
+      - gateway
+      - lobby
+      - auth
+      - character
+      - chat
+    restart: unless-stopped
+
+  # Gateway (API backend)
+  gateway:
+    build:
+      context: ../api-gateway
+      dockerfile: Dockerfile
+    container_name: api-gateway
+    ports:
+      - "8000:8000"
+    environment:
+      NODE_ENV: development
+      PORT: 8000
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-key}
+      # Internal service URLs (Docker network names)
+      AUTH_SERVICE_URL: http://auth-service:3001
+      USER_SERVICE_URL: http://user-service:3002
+      CHARACTER_SERVICE_URL: http://character-service:3003
+      CHAT_SERVICE_URL: http://chat-service:3004
+      AI_SERVICE_URL: http://ai-service:3005
+    networks:
+      - nexus-network
+    depends_on:
+      - auth-service
+      - user-service
+      - character-service
+      - chat-service
+    restart: unless-stopped
+
+  # Lobby frontend
+  lobby:
+    build:
+      context: ../persona-nexus-lobby
+      dockerfile: Dockerfile
+    container_name: lobby-frontend
+    ports:
+      - "5175:5175"
+    environment:
+      VITE_API_URL: /api
+    networks:
+      - nexus-network
+    restart: unless-stopped
+
+  # Auth frontend
+  auth:
+    build:
+      context: ../persona-nexus-auth
+      dockerfile: Dockerfile
+    container_name: auth-frontend
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_API_URL: /api
+    networks:
+      - nexus-network
+    restart: unless-stopped
+
+  # Character frontend
+  character:
+    build:
+      context: ../persona-nexus-character
+      dockerfile: Dockerfile
+    container_name: character-frontend
+    ports:
+      - "5174:5174"
+    environment:
+      VITE_API_URL: /api
+    networks:
+      - nexus-network
+    restart: unless-stopped
+
+  # Chat frontend
+  chat:
+    build:
+      context: ../persona-nexus-chat
+      dockerfile: Dockerfile
+    container_name: chat-frontend
+    ports:
+      - "5176:5176"
+    environment:
+      VITE_API_URL: /api
+    networks:
+      - nexus-network
+    restart: unless-stopped
+
+  # Backend services
+  auth-service:
+    build:
+      context: ../auth-service
+      dockerfile: Dockerfile
+    container_name: auth-backend
+    environment:
+      NODE_ENV: development
+      PORT: 3001
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-key}
+    networks:
+      - nexus-network
+    restart: unless-stopped
+
+  user-service:
+    build:
+      context: ../user-service
+      dockerfile: Dockerfile
+    container_name: user-backend
+    environment:
+      NODE_ENV: development
+      PORT: 3002
+    networks:
+      - nexus-network
+    restart: unless-stopped
+
+  character-service:
+    build:
+      context: ../character-service
+      dockerfile: Dockerfile
+    container_name: character-backend
+    environment:
+      NODE_ENV: development
+      PORT: 3003
+    networks:
+      - nexus-network
+    restart: unless-stopped
+
+  chat-service:
+    build:
+      context: ../chat-service
+      dockerfile: Dockerfile
+    container_name: chat-backend
+    environment:
+      NODE_ENV: development
+      PORT: 3004
+    networks:
+      - nexus-network
+    restart: unless-stopped
+
+  # AI service (GPU optional in dev)
+  ai-service:
+    build:
+      context: ../ai-service
+      dockerfile: Dockerfile
+    container_name: ai-backend
+    environment:
+      NODE_ENV: development
+      PORT: 3005
+    networks:
+      - nexus-network
+    restart: unless-stopped
+    # Uncomment for GPU support:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+networks:
+  nexus-network:
+    driver: bridge

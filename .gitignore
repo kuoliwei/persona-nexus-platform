@@ -1,0 +1,46 @@
+# Microservices
+ai-service/
+auth-service/
+user-service/
+character-service/
+chat-service/
+
+# Frontend projects
+persona-nexus-auth/
+persona-nexus-character/
+persona-nexus-lobby/
+persona-nexus-chat/
+
+# Node modules and dependencies
+node_modules/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build outputs
+dist/
+build/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.bak
+
+# Claude Code
+.claude/

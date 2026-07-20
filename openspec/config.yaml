@@ -1,0 +1,82 @@
+schema: spec-driven
+
+# Project context
+context: |
+  ## Persona Nexus Platform
+  一個類 Character.ai 的 AI 角色扮演/戀愛模擬對話平台。學習性質專案，採微服務架構。
+
+  ### 核心技術棧
+  **後端服務：** Node.js 20.19.0+，ESM modules，Express 5，Prisma 7，SQLite（libSQL adapter）
+  **前端：** Vite，Vanilla JS（無框架），無 TypeScript
+  **共通工具：** bcrypt（密碼雜湊），jsonwebtoken（JWT），zod（驗證），Jest/Vitest（測試）
+
+  ### 微服務清單
+  | 服務 | 技術 | 職責 |
+  |------|------|------|
+  | auth-service (3000) | Node.js + Express | 註冊/登入，簽發 JWT |
+  | user-service (4000) | Express + Prisma + SQLite | 使用者帳號 CRUD |
+  | character-service (5000) | Express + Prisma + SQLite | AI 角色 CRUD |
+  | chat-service (6000) | Express + Prisma + SQLite | 對話訊息管理、記憶窗口 |
+  | ai-service (6001) | Python + FastAPI + LangChain | LLM 推論 + RAG 記憶檢索 |
+  | api-gateway (8000) | Express | JWT 驗證、路由轉發、CORS |
+
+  ### 前端清單
+  | 應用 | Port | 職責 |
+  |------|------|------|
+  | persona-nexus-auth | 5173 | 登入/註冊頁面 |
+  | persona-nexus-character | 5174 | 角色創建/編輯頁面 |
+  | persona-nexus-lobby | 5175 | 平台首頁、角色大廳 |
+  | persona-nexus-chat | 5176 | 聊天室 |
+
+  ### 架構原則
+  - **唯一入口：** 前端一律打 api-gateway (8000)，不直接調用後端服務
+  - **JWT 驗證集中化：** Gateway 驗證 JWT，成功後注入 `x-user-id` / `x-user-email` header 轉發
+  - **後端無狀態：** 各服務直接信任 gateway 注入的 header，不再驗證 JWT
+  - **三層架構：** Controller（HTTP）→ Service（業務邏輯）→ Repository（資料存取）
+  - **錯誤碼語義化：** Service 層拋出語意錯誤（如 `EMAIL_ALREADY_EXISTS`），Controller 轉 HTTP 狀態碼
+
+  ### 協作約定
+  - 學習導向：優先解釋原理與設計思考，讓使用者自己動手寫程式
+  - 直播式：邊聊天邊完善功能（Vibe Coding），規格文件補齊是為了保證契約性
+  - 版本控制：各服務是獨立 git repo（非 monorepo），已整合到同一工作資料夾
+  - 環境變數：`.env` 和 `.env.example` 必須同步；跨服務調用的祕鑰（如 `JWT_SECRET`）必須一致
+
+  ### 已知缺口（設計負債）
+  - persona-nexus-auth 登入成功後未存 localStorage token + 未導向大廳（前端流程受阻）
+  - persona-nexus-character 直打 character-service (5000) 而不經 gateway（繞過了 JWT 驗證）
+  - chat-service 與 ai-service 的連接尚未完成
+  - 多數服務無單元測試、無 lint 設定、無 CI/CD
+
+  ### 命名慣例
+  - 資料 ID：`usr_<timestamp>`（使用者）/ `char_<timestamp>`（角色）/ `conv_<cuid>`（對話）等
+  - 環境變數：大寫 + 底線，如 `JWT_SECRET`、`USER_SERVICE_URL`、`OPENSPEC_TELEMETRY`
+  - 路由路徑：`/api/v1/<resource>` 為內部標準，gateway 可能 rewrite 對外路徑
+  - 錯誤碼：全大寫 + 底線，如 `EMAIL_ALREADY_EXISTS`、`CHARACTER_NOT_FOUND`
+
+# Per-artifact rules
+rules:
+  proposal:
+    - 中文撰寫，200-500 字為宜
+    - 務必包含「為什麼做」（Why）、「變更清單」（What Changes）、「影響範圍」（Impact）
+    - 新增功能清楚列舉新 API 端點、新 DB 欄位、新環境變數
+    - 修改既有功能要說明向後相容性與遷移策略
+
+  specs:
+    - 使用 Given/When/Then scenario 格式，每個 Requirement 必須有至少一個 Scenario
+    - RFC 2119 關鍵字（MUST/SHALL/SHOULD/MAY）明確需求強度
+    - 涉及 DB 變更要列出新表/新欄位、索引、migration 檔名
+    - 涉及 API 變更要有完整的 Request Body / Response 例子（JSON 格式）
+    - 錯誤處理要列舉所有可能的 error code 與對應 HTTP status
+    - Delta Spec 格式：分 ADDED / MODIFIED / REMOVED 三節
+
+  design:
+    - 技術架構設計、主要決策與權衡說明
+    - 涉及服務間通信要畫出時序圖或文本流程
+    - 資料流向（入/出/轉換）要明確
+    - 效能考量、安全考量、相容性考量分別敘述
+
+  tasks:
+    - 每個任務控制在 2-3 小時內可完成
+    - 層級清楚（子任務用縮排）
+    - 預估工時與依賴關係要明確
+    - 檢查項目包括單元測試、PR review、文件更新
