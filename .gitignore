@@ -1,15 +1,9 @@
-# Microservices
+# Microservices (separate git repos, tracked separately)
 ai-service/
 auth-service/
 user-service/
 character-service/
 chat-service/
-
-# Frontend projects
-persona-nexus-auth/
-persona-nexus-character/
-persona-nexus-lobby/
-persona-nexus-chat/
 
 # Node modules and dependencies
 node_modules/
@@ -18,9 +12,11 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Build outputs
-dist/
-build/
+# Build outputs (temporary, regenerated)
+# Note: Frontend projects (persona-nexus-*) are tracked for source code only
+persona-nexus-*/dist/
+persona-nexus-*/node_modules/
+persona-nexus-*/build/
 
 # Environment files
 .env
