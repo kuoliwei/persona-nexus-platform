@@ -1,52 +1,76 @@
-# Caddy reverse proxy — DOCKER-COMPOSE mode
-# ==========================================
-# Mounted into the caddy container by docker-compose.yml.
-# Upstreams use docker-compose SERVICE NAMES (resolved by Docker's internal DNS),
-# NOT localhost — inside the caddy container, localhost is the container itself.
+# Caddy — DOCKER-COMPOSE mode (static frontends + API reverse proxy)
+# ===================================================================
+# Frontends are served as PRE-BUILT static files, not dev servers.
+# Build them on the host first (see deploy/README.md), then docker-compose
+# mounts each dist/ read-only into this container:
 #
-# For host/manual development (no Docker), use ./Caddyfile instead (localhost upstreams).
+#   persona-nexus-lobby/dist     -> /srv/lobby
+#   persona-nexus-auth/dist      -> /srv/auth
+#   persona-nexus-character/dist -> /srv/character
+#   persona-nexus-chat/dist      -> /srv/chat
 #
-# Routing (single origin, path-based):
-#   /api/*      → gateway   (8000)
-#   /login*     → auth       (Vite base /login/)
-#   /character* → character  (Vite base /character/)
-#   /chat*      → chat        (Vite base /chat/)
-#   everything else → lobby   (Vite base /)   [default fallback]
+# Only /api/* is proxied — to the gateway container (Docker DNS service name).
+#
+# Path layout (single origin):
+#   /api/*      -> gateway:8000
+#   /login*     -> auth dist       (Vite base /login/)
+#   /character* -> character dist  (Vite base /character/)
+#   /chat*      -> chat dist       (Vite base /chat/)
+#   everything else -> lobby dist  (Vite base /)   [default fallback]
+#
+# `uri strip_prefix` removes the mount path so it maps onto the dist layout:
+# a request for /login/assets/x.js becomes /assets/x.js -> /srv/auth/assets/x.js.
+# `try_files ... /index.html` gives each app its SPA fallback for client routes.
 
 :8080 {
 	log {
 		level DEBUG
 	}
 
-	# API Gateway — all /api/* requests. Must come before the lobby fallback.
+	encode gzip
+
+	# --- API ---
 	handle /api/* {
 		reverse_proxy gateway:8000
 	}
 
-	# Auth frontend
+	# --- Auth frontend ---
 	handle /login* {
-		reverse_proxy auth:5173
+		root * /srv/auth
+		uri strip_prefix /login
+		try_files {path} /index.html
+		file_server
 	}
 
-	# Character frontend
+	# --- Character frontend (multi-page: index, creator-create, creator-edit) ---
 	handle /character* {
-		reverse_proxy character:5174
+		root * /srv/character
+		uri strip_prefix /character
+		try_files {path} /index.html
+		file_server
 	}
 
-	# Chat frontend
+	# --- Chat frontend ---
 	handle /chat* {
-		reverse_proxy chat:5176
+		root * /srv/chat
+		uri strip_prefix /chat
+		try_files {path} /index.html
+		file_server
 	}
 
-	# Lobby frontend — default handler (catches "/", "/assets/*", and anything unmatched).
+	# --- Lobby frontend (default) ---
+	# Catches "/", "/assets/*", "/src/*.html" partials, and client routes
+	# such as /my-characters, which fall back to index.html.
 	handle {
-		reverse_proxy lobby:5175
+		root * /srv/lobby
+		try_files {path} /index.html
+		file_server
 	}
 }
 
 # ---------------------------------------------------------------------------
-# Production example (uncomment, set your domain). Caddy auto-provisions HTTPS
-# via Let's Encrypt when a real domain is used and ports 80/443 are reachable.
+# Production: same layout, real domain. Caddy auto-provisions HTTPS via
+# Let's Encrypt when the domain resolves here and ports 80/443 are reachable.
 # ---------------------------------------------------------------------------
 # persona-nexus.com {
 # 	encode gzip
@@ -55,15 +79,26 @@
 # 		reverse_proxy gateway:8000
 # 	}
 # 	handle /login* {
-# 		reverse_proxy auth:5173
+# 		root * /srv/auth
+# 		uri strip_prefix /login
+# 		try_files {path} /index.html
+# 		file_server
 # 	}
 # 	handle /character* {
-# 		reverse_proxy character:5174
+# 		root * /srv/character
+# 		uri strip_prefix /character
+# 		try_files {path} /index.html
+# 		file_server
 # 	}
 # 	handle /chat* {
-# 		reverse_proxy chat:5176
+# 		root * /srv/chat
+# 		uri strip_prefix /chat
+# 		try_files {path} /index.html
+# 		file_server
 # 	}
 # 	handle {
-# 		reverse_proxy lobby:5175
+# 		root * /srv/lobby
+# 		try_files {path} /index.html
+# 		file_server
 # 	}
 # }

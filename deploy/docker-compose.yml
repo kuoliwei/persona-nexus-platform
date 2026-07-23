@@ -1,41 +1,51 @@
+# Persona Nexus — same-origin stack
+#
+# Frontends are NOT containers. They are built on the host (npm run build in
+# each persona-nexus-* project) and their dist/ folders are mounted read-only
+# into Caddy, which serves them directly. See deploy/README.md.
+#
+# Prerequisite: every service below needs a Dockerfile in its project root.
+
 services:
-  # Caddy reverse proxy - single entry point
+  # Single public entry point: static frontends + /api/* reverse proxy
   caddy:
     image: caddy:2-alpine
-    container_name: caddy-proxy
+    container_name: nexus-caddy
     ports:
       - "8080:8080"
     volumes:
-      # Docker mode uses service-name upstreams (Caddyfile.docker), not localhost.
-      - ./Caddyfile.docker:/etc/caddy/Caddyfile
+      - ./Caddyfile.docker:/etc/caddy/Caddyfile:ro
+      # Pre-built frontend bundles (run npm run build on the host first)
+      - ../persona-nexus-lobby/dist:/srv/lobby:ro
+      - ../persona-nexus-auth/dist:/srv/auth:ro
+      - ../persona-nexus-character/dist:/srv/character:ro
+      - ../persona-nexus-chat/dist:/srv/chat:ro
+      - caddy-data:/data
+      - caddy-config:/config
     networks:
       - nexus-network
     depends_on:
       - gateway
-      - lobby
-      - auth
-      - character
-      - chat
     restart: unless-stopped
 
-  # Gateway (API backend)
+  # API Gateway — the only backend Caddy talks to
   gateway:
     build:
       context: ../api-gateway
       dockerfile: Dockerfile
-    container_name: api-gateway
-    ports:
-      - "8000:8000"
+    container_name: nexus-gateway
     environment:
-      NODE_ENV: development
+      NODE_ENV: production
       PORT: 8000
-      JWT_SECRET: ${JWT_SECRET:-dev-secret-key}
-      # Internal service URLs (Docker network names)
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      # Internal upstreams use compose service names (Docker DNS), never localhost
       AUTH_SERVICE_URL: http://auth-service:3001
       USER_SERVICE_URL: http://user-service:3002
       CHARACTER_SERVICE_URL: http://character-service:3003
       CHAT_SERVICE_URL: http://chat-service:3004
       AI_SERVICE_URL: http://ai-service:3005
+      # Same-origin: the browser only ever talks to Caddy's origin
+      FRONTEND_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost:8080}
     networks:
       - nexus-network
     depends_on:
@@ -45,72 +55,15 @@ services:
       - chat-service
     restart: unless-stopped
 
-  # Lobby frontend
-  lobby:
-    build:
-      context: ../persona-nexus-lobby
-      dockerfile: Dockerfile
-    container_name: lobby-frontend
-    ports:
-      - "5175:5175"
-    environment:
-      VITE_API_URL: /api
-    networks:
-      - nexus-network
-    restart: unless-stopped
-
-  # Auth frontend
-  auth:
-    build:
-      context: ../persona-nexus-auth
-      dockerfile: Dockerfile
-    container_name: auth-frontend
-    ports:
-      - "5173:5173"
-    environment:
-      VITE_API_URL: /api
-    networks:
-      - nexus-network
-    restart: unless-stopped
-
-  # Character frontend
-  character:
-    build:
-      context: ../persona-nexus-character
-      dockerfile: Dockerfile
-    container_name: character-frontend
-    ports:
-      - "5174:5174"
-    environment:
-      VITE_API_URL: /api
-    networks:
-      - nexus-network
-    restart: unless-stopped
-
-  # Chat frontend
-  chat:
-    build:
-      context: ../persona-nexus-chat
-      dockerfile: Dockerfile
-    container_name: chat-frontend
-    ports:
-      - "5176:5176"
-    environment:
-      VITE_API_URL: /api
-    networks:
-      - nexus-network
-    restart: unless-stopped
-
-  # Backend services
   auth-service:
     build:
       context: ../auth-service
       dockerfile: Dockerfile
-    container_name: auth-backend
+    container_name: nexus-auth-service
     environment:
-      NODE_ENV: development
+      NODE_ENV: production
       PORT: 3001
-      JWT_SECRET: ${JWT_SECRET:-dev-secret-key}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
     networks:
       - nexus-network
     restart: unless-stopped
@@ -119,9 +72,9 @@ services:
     build:
       context: ../user-service
       dockerfile: Dockerfile
-    container_name: user-backend
+    container_name: nexus-user-service
     environment:
-      NODE_ENV: development
+      NODE_ENV: production
       PORT: 3002
     networks:
       - nexus-network
@@ -131,9 +84,9 @@ services:
     build:
       context: ../character-service
       dockerfile: Dockerfile
-    container_name: character-backend
+    container_name: nexus-character-service
     environment:
-      NODE_ENV: development
+      NODE_ENV: production
       PORT: 3003
     networks:
       - nexus-network
@@ -143,27 +96,27 @@ services:
     build:
       context: ../chat-service
       dockerfile: Dockerfile
-    container_name: chat-backend
+    container_name: nexus-chat-service
     environment:
-      NODE_ENV: development
+      NODE_ENV: production
       PORT: 3004
     networks:
       - nexus-network
     restart: unless-stopped
 
-  # AI service (GPU optional in dev)
+  # ai-service binds a local GPU today; see ARCHITECTURE.md before containerizing.
   ai-service:
     build:
       context: ../ai-service
       dockerfile: Dockerfile
-    container_name: ai-backend
+    container_name: nexus-ai-service
     environment:
-      NODE_ENV: development
+      NODE_ENV: production
       PORT: 3005
     networks:
       - nexus-network
     restart: unless-stopped
-    # Uncomment for GPU support:
+    # GPU passthrough (uncomment when the host exposes an NVIDIA runtime):
     # deploy:
     #   resources:
     #     reservations:
@@ -175,3 +128,7 @@ services:
 networks:
   nexus-network:
     driver: bridge
+
+volumes:
+  caddy-data:
+  caddy-config:

@@ -1,256 +1,177 @@
 # Same-Origin Deployment Guide
 
-This directory contains deployment configurations for the Persona Nexus platform using Caddy as a reverse proxy and Docker Compose for orchestration.
+Everything the browser touches is served from **one origin**. Caddy is the single
+public entry point; it serves the four frontends as static files and reverse-proxies
+`/api/*` to the API Gateway. Because nothing is cross-origin, CORS largely disappears.
 
-## Architecture Overview
+## Path layout
 
-- **Caddy** (`:8080`): Single entry point, reverse proxy to all services
-- **API Gateway** (`:8000` internally): Routes all `/api/*` requests
-- **Four Frontend Services**:
-  - Lobby (`:5175`) → mounted at `/`
-  - Auth (`:5173`) → mounted at `/login`
-  - Character (`:5174`) → mounted at `/character`
-  - Chat (`:5176`) → mounted at `/chat`
-- **Backend Services**:
-  - auth-service (`:3001`)
-  - user-service (`:3002`)
-  - character-service (`:3003`)
-  - chat-service (`:3004`)
-  - ai-service (`:3005`)
+| Public path | Served by | Vite `base` |
+|-------------|-----------|-------------|
+| `/` (and anything unmatched) | lobby frontend | `/` |
+| `/login*` | auth frontend | `/login/` |
+| `/character*` | character frontend | `/character/` |
+| `/chat*` | chat frontend | `/chat/` |
+| `/api/*` | api-gateway → backend services | — |
 
-## Quick Start
+Backend services sit behind the gateway and are never exposed publicly:
+auth-service `3001`, user-service `3002`, character-service `3003`,
+chat-service `3004`, ai-service `3005`. The gateway's `/internal/*` routes are
+for service-to-service calls only and are not routed by Caddy.
 
-### Prerequisites
+## Two Caddyfiles
 
-- Docker & Docker Compose installed
-- All microservices have `Dockerfile` in their root directories
-- `.env` file in this directory (or use defaults)
+The upstream addresses differ per mode, so there are two configs:
 
-### Two Caddyfiles (important)
+| File | Used by | Frontends | API upstream |
+|------|---------|-----------|--------------|
+| `Caddyfile.docker` | docker-compose | pre-built `dist/` served by Caddy | `gateway:8000` (Docker DNS) |
+| `Caddyfile` | manual/host run | Vite dev servers (hot reload) | `localhost:8000` |
 
-There are **two** reverse-proxy configs because the upstream addresses differ by mode:
+Inside the Caddy container `localhost` means the container itself, so docker mode
+**must** use compose service names. On the host, Docker DNS names don't resolve, so
+manual mode **must** use `localhost`. `docker-compose.yml` mounts `Caddyfile.docker`
+automatically.
 
-| File | Used by | Upstreams |
-|------|---------|-----------|
-| `Caddyfile.docker` | docker-compose (Method 1) | service names (`gateway:8000`, `lobby:5175`, …) — resolved by Docker DNS |
-| `Caddyfile` | manual/host run (Method 2) | `localhost:*` — Caddy and all services run on the host |
+---
 
-Inside the Caddy container, `localhost` means the container itself, so docker mode **must** use service names. On the host, Docker DNS names don't resolve, so manual mode **must** use `localhost`. `docker-compose.yml` mounts `Caddyfile.docker` automatically.
+## Method 1 — Docker Compose
 
-### Starting the Stack
-
-#### Method 1: Docker Compose (Recommended)
+Frontends are **not** containers. Build them on the host; Caddy mounts each `dist/`
+read-only and serves it.
 
 ```bash
+# 1. Build all four frontends
+for d in lobby auth character chat; do (cd ../persona-nexus-$d && npm ci && npm run build); done
+
+# 2. Provide secrets (JWT_SECRET is required — compose fails loudly without it)
 cd deploy
+cp .env.example .env    # then edit
+# or: export JWT_SECRET=...
+
+# 3. Start
 docker-compose up -d
 ```
 
-This will:
-1. Build all services (if images don't exist)
-2. Start Caddy on `localhost:8080`
-3. Start all frontends and backends
+Open http://localhost:8080.
 
-#### Method 2: Manual Start (for debugging)
+Re-run the build step and `docker-compose restart caddy` after changing frontend code.
 
-Start services in separate terminals:
+> **Prerequisite:** each backend project (`api-gateway`, `auth-service`, `user-service`,
+> `character-service`, `chat-service`, `ai-service`) needs a `Dockerfile` in its root.
+> `docker-compose config` only validates YAML — a missing Dockerfile surfaces at
+> `docker-compose up --build`.
 
-```bash
-# Terminal 1: Caddy reverse proxy
-caddy run --config ./Caddyfile --watch
+## Method 2 — Manual / host (best for development)
 
-# Terminal 2-5: Frontends (each in project directory)
-cd ../persona-nexus-lobby && npm run dev
-cd ../persona-nexus-auth && npm run dev
-cd ../persona-nexus-character && npm run dev
-cd ../persona-nexus-chat && npm run dev
-
-# Terminal 6+: Backends (each in service directory)
-cd ../auth-service && npm start
-cd ../user-service && npm start
-cd ../character-service && npm start
-cd ../chat-service && npm start
-cd ../ai-service && npm start
-```
-
-## Environment Variables
-
-Create a `.env` file in the `deploy/` directory:
+No Docker required, and you keep Vite hot reload. Caddy proxies to the dev servers.
 
 ```bash
-# Security
-JWT_SECRET=your-secret-key-here
+# Terminal 1 — reverse proxy (uses ./Caddyfile, the localhost variant)
+caddy run --config ./Caddyfile --adapter caddyfile
 
-# Caddy domain (dev: localhost, prod: your domain)
-CADDY_DOMAIN=localhost:8080
+# Terminals 2-5 — frontends
+(cd ../persona-nexus-lobby     && npm run dev)   # 5175
+(cd ../persona-nexus-auth      && npm run dev)   # 5173
+(cd ../persona-nexus-character && npm run dev)   # 5174
+(cd ../persona-nexus-chat      && npm run dev)   # 5176
 
-# Service ports (optional, defaults shown)
-AUTH_SERVICE_URL=http://auth-service:3001
-USER_SERVICE_URL=http://user-service:3002
-CHARACTER_SERVICE_URL=http://character-service:3003
-CHAT_SERVICE_URL=http://chat-service:3004
-AI_SERVICE_URL=http://ai-service:3005
+# Terminal 6 — gateway
+(cd ../api-gateway && npm run dev)               # 8000
+
+# Terminals 7+ — backend services
+(cd ../auth-service && npm start)                # 3001
+(cd ../user-service && npm start)                # 3002
+(cd ../character-service && npm start)           # 3003
+(cd ../chat-service && npm start)                # 3004
+(cd ../ai-service && npm start)                  # 3005
 ```
 
-## Health Checks
+Open http://localhost:8080 — the same URLs as production.
 
-### Test Caddy is running
+---
+
+## Environment variables
+
+`JWT_SECRET` is required and must match auth-service's value; the gateway verifies
+tokens auth-service signs.
 
 ```bash
-curl http://localhost:8080/
-# Should return lobby frontend HTML
+JWT_SECRET=<same value as auth-service>
+PUBLIC_ORIGIN=http://localhost:8080   # the browser-facing origin
 ```
 
-### Test routing
+Backend upstreams are set in `docker-compose.yml` using service names and normally
+need no override.
+
+## Health checks
 
 ```bash
-# Lobby
-curl http://localhost:8080/
-
-# Auth frontend
-curl http://localhost:8080/login
-
-# Character frontend
-curl http://localhost:8080/character
-
-# Chat frontend
-curl http://localhost:8080/chat
-
-# API Gateway config
-curl http://localhost:8080/api/config
+curl -i http://localhost:8080/                       # lobby HTML
+curl -i http://localhost:8080/login/                  # auth HTML
+curl -i http://localhost:8080/character/              # character HTML
+curl -i http://localhost:8080/chat/                   # chat HTML
+curl -i http://localhost:8080/api/config              # gateway JSON
+curl -i http://localhost:8080/my-characters           # lobby SPA fallback
+curl -i http://localhost:8080/character/creator-edit.html   # multi-page entry
 ```
 
-### Test API calls
+Each frontend path must return **its own** bundle. If `/login/` returns lobby's
+HTML, the `handle` ordering in the Caddyfile is wrong — the bare `handle` lobby
+fallback must be last.
 
 ```bash
-# Check auth endpoint
-curl -X POST http://localhost:8080/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"test@example.com","password":"test"}'
+docker-compose logs -f            # all
+docker-compose logs -f caddy      # routing issues
+docker-compose logs -f gateway    # API issues
 ```
 
-### View logs
+## Stopping
 
 ```bash
-# All services
-docker-compose logs -f
-
-# Specific service
-docker-compose logs -f caddy
-docker-compose logs -f gateway
-docker-compose logs -f lobby
+docker-compose down        # keep volumes
+docker-compose down -v     # also drop Caddy's cert/config volumes
 ```
 
-## Stopping the Stack
-
-```bash
-docker-compose down
-
-# Remove volumes (clears data)
-docker-compose down -v
-```
+---
 
 ## Troubleshooting
 
-### Caddy can't find frontend services
+**A frontend path returns the lobby page.** The lobby `handle` has no matcher, so it
+catches everything; it must be the last `handle` block.
 
-**Problem**: `502 Bad Gateway` when accessing `/login`, `/character`, or `/chat`
+**Assets 404 under `/login`, `/character`, `/chat`.** The Vite `base` and the Caddy
+path must agree. `base` must keep its trailing slash (`/login/`), and the matching
+`handle` block strips the prefix (`uri strip_prefix /login`) so `/login/assets/x.js`
+maps to `/srv/auth/assets/x.js`.
 
-**Solution**: 
-- Ensure frontend containers are running: `docker-compose ps`
-- Check frontend is binding to `0.0.0.0` (not `localhost` only)
-- Verify Caddy can reach by checking logs: `docker-compose logs caddy`
+**Lobby loads but pages are blank.** The lobby fetches HTML partials at runtime from
+`/src/*.html`. Those live in `persona-nexus-lobby/public/src/` so Vite copies them
+verbatim into `dist/src/`. If they are moved back under `src/`, the dev server still
+works but the production build will not contain them.
 
-### Frontends can't reach API Gateway
+**Character create/edit iframe is blank.** The character app is multi-page. Its
+`vite.config.js` must list `creator-create.html` and `creator-edit.html` in
+`build.rollupOptions.input`, or Vite builds only `index.html`.
 
-**Problem**: Frontend API calls fail with `404` or `CORS` errors
+**`/api/*` returns 502.** Caddy reached the gateway upstream but the gateway is down
+or unreachable. A 404 instead would mean the request never matched the `/api/*`
+handle. Check `docker-compose logs gateway`.
 
-**Solution**:
-- Check that frontends use relative paths (`fetch('/api/...')`)
-- Verify gateway is running: `docker-compose ps`
-- Test gateway directly: `curl http://localhost:8080/api/config`
+**`docker-compose up` fails to build.** A service is missing its `Dockerfile`
+(see the prerequisite note above).
 
-### Port conflicts
+**Port 8080 in use.** Change the address in both Caddyfiles and the `ports` mapping
+in `docker-compose.yml`.
 
-**Problem**: `Port 8080 already in use`
+## Production
 
-**Solution**:
-- Stop other services using the port
-- Or modify `Caddyfile` and `docker-compose.yml` to use different ports
-
-### Container won't start
-
-**Problem**: `docker-compose up` fails to start a container
-
-**Solution**:
-- Check if `Dockerfile` exists in service directory
-- View build error: `docker-compose logs <service-name>`
-- Rebuild image: `docker-compose build --no-cache <service-name>`
-
-## Development Workflow
-
-### Hot reloading frontends
-
-The docker-compose setup mounts frontends as volumes, enabling hot reload:
-
-```bash
-# Edit frontend code
-# Changes auto-reload in browser at http://localhost:8080
-```
-
-### Restarting a single service
-
-```bash
-docker-compose restart lobby
-```
-
-### Rebuilding after dependency changes
-
-```bash
-docker-compose build --no-cache <service-name>
-docker-compose up -d
-```
-
-## Production Deployment
-
-To deploy to production:
-
-1. Update `Caddyfile.docker` to use your domain (see commented production block)
-2. Set environment variables for production secrets
-3. Ensure all services have proper environment configs
-4. Run Caddy with auto HTTPS:
-   ```bash
-   docker-compose up -d
-   # Caddy will automatically request Let's Encrypt certificate
-   ```
-
-## Network Architecture
-
-All services communicate via the `nexus-network` Docker network:
-
-```
-┌─────────────────────────────────────────┐
-│         Caddy (8080)                    │
-│    Single reverse proxy entry           │
-└─────────────────────────────────────────┘
-         ↓                                  
-    Routing by path                        
-    ├─ / → Lobby (5175)                    
-    ├─ /login → Auth (5173)                
-    ├─ /character → Character (5174)       
-    ├─ /chat → Chat (5176)                 
-    └─ /api/* → Gateway (8000)             
-                 ↓                         
-        API Gateway routes to:             
-        ├─ auth-service (3001)             
-        ├─ user-service (3002)             
-        ├─ character-service (3003)        
-        ├─ chat-service (3004)             
-        └─ ai-service (3005)               
-```
+1. In `Caddyfile.docker`, uncomment the production block and set your domain.
+2. Point the domain at the host and open ports 80/443 — Caddy provisions HTTPS via
+   Let's Encrypt automatically and renews it.
+3. Set `PUBLIC_ORIGIN` to `https://your-domain` and supply a real `JWT_SECRET`.
 
 ## References
 
-- [Caddy Documentation](https://caddyserver.com/docs/)
-- [Docker Compose Reference](https://docs.docker.com/compose/compose-file/)
-- [Persona Nexus Architecture](../ARCHITECTURE.md)
+- [Caddy documentation](https://caddyserver.com/docs/)
+- [Platform architecture](../ARCHITECTURE.md)
