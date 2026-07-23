@@ -1,0 +1,69 @@
+# Caddy reverse proxy — DOCKER-COMPOSE mode
+# ==========================================
+# Mounted into the caddy container by docker-compose.yml.
+# Upstreams use docker-compose SERVICE NAMES (resolved by Docker's internal DNS),
+# NOT localhost — inside the caddy container, localhost is the container itself.
+#
+# For host/manual development (no Docker), use ./Caddyfile instead (localhost upstreams).
+#
+# Routing (single origin, path-based):
+#   /api/*      → gateway   (8000)
+#   /login*     → auth       (Vite base /login/)
+#   /character* → character  (Vite base /character/)
+#   /chat*      → chat        (Vite base /chat/)
+#   everything else → lobby   (Vite base /)   [default fallback]
+
+:8080 {
+	log {
+		level DEBUG
+	}
+
+	# API Gateway — all /api/* requests. Must come before the lobby fallback.
+	handle /api/* {
+		reverse_proxy gateway:8000
+	}
+
+	# Auth frontend
+	handle /login* {
+		reverse_proxy auth:5173
+	}
+
+	# Character frontend
+	handle /character* {
+		reverse_proxy character:5174
+	}
+
+	# Chat frontend
+	handle /chat* {
+		reverse_proxy chat:5176
+	}
+
+	# Lobby frontend — default handler (catches "/", "/assets/*", and anything unmatched).
+	handle {
+		reverse_proxy lobby:5175
+	}
+}
+
+# ---------------------------------------------------------------------------
+# Production example (uncomment, set your domain). Caddy auto-provisions HTTPS
+# via Let's Encrypt when a real domain is used and ports 80/443 are reachable.
+# ---------------------------------------------------------------------------
+# persona-nexus.com {
+# 	encode gzip
+#
+# 	handle /api/* {
+# 		reverse_proxy gateway:8000
+# 	}
+# 	handle /login* {
+# 		reverse_proxy auth:5173
+# 	}
+# 	handle /character* {
+# 		reverse_proxy character:5174
+# 	}
+# 	handle /chat* {
+# 		reverse_proxy chat:5176
+# 	}
+# 	handle {
+# 		reverse_proxy lobby:5175
+# 	}
+# }

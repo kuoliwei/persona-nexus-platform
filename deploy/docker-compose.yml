@@ -6,7 +6,8 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile
+      # Docker mode uses service-name upstreams (Caddyfile.docker), not localhost.
+      - ./Caddyfile.docker:/etc/caddy/Caddyfile
     networks:
       - nexus-network
     depends_on:

@@ -26,6 +26,17 @@ This directory contains deployment configurations for the Persona Nexus platform
 - All microservices have `Dockerfile` in their root directories
 - `.env` file in this directory (or use defaults)
 
+### Two Caddyfiles (important)
+
+There are **two** reverse-proxy configs because the upstream addresses differ by mode:
+
+| File | Used by | Upstreams |
+|------|---------|-----------|
+| `Caddyfile.docker` | docker-compose (Method 1) | service names (`gateway:8000`, `lobby:5175`, …) — resolved by Docker DNS |
+| `Caddyfile` | manual/host run (Method 2) | `localhost:*` — Caddy and all services run on the host |
+
+Inside the Caddy container, `localhost` means the container itself, so docker mode **must** use service names. On the host, Docker DNS names don't resolve, so manual mode **must** use `localhost`. `docker-compose.yml` mounts `Caddyfile.docker` automatically.
+
 ### Starting the Stack
 
 #### Method 1: Docker Compose (Recommended)
@@ -204,7 +215,7 @@ docker-compose up -d
 
 To deploy to production:
 
-1. Update `Caddyfile` to use your domain (see commented section)
+1. Update `Caddyfile.docker` to use your domain (see commented production block)
 2. Set environment variables for production secrets
 3. Ensure all services have proper environment configs
 4. Run Caddy with auto HTTPS:
