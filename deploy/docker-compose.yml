@@ -38,12 +38,13 @@ services:
       NODE_ENV: production
       PORT: 8000
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
-      # Internal upstreams use compose service names (Docker DNS), never localhost
-      AUTH_SERVICE_URL: http://auth-service:3001
-      USER_SERVICE_URL: http://user-service:3002
-      CHARACTER_SERVICE_URL: http://character-service:3003
-      CHAT_SERVICE_URL: http://chat-service:3004
-      AI_SERVICE_URL: http://ai-service:3005
+      # Internal upstreams use compose service names (Docker DNS), never localhost.
+      # Ports match what each service actually listens on — do not renumber here.
+      AUTH_SERVICE_URL: http://auth-service:3000
+      USER_SERVICE_URL: http://user-service:4000
+      CHARACTER_SERVICE_URL: http://character-service:5000
+      CHAT_SERVICE_URL: http://chat-service:6000
+      AI_SERVICE_URL: http://ai-service:6001
       # FRONTEND_ORIGIN is deliberately unset: the browser reaches this gateway
       # through Caddy on the same origin, so CORS is neither needed nor enabled.
     networks:
@@ -62,7 +63,7 @@ services:
     container_name: nexus-auth-service
     environment:
       NODE_ENV: production
-      PORT: 3001
+      PORT: 3000
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
     networks:
       - nexus-network
@@ -75,7 +76,7 @@ services:
     container_name: nexus-user-service
     environment:
       NODE_ENV: production
-      PORT: 3002
+      PORT: 4000
     networks:
       - nexus-network
     restart: unless-stopped
@@ -87,7 +88,7 @@ services:
     container_name: nexus-character-service
     environment:
       NODE_ENV: production
-      PORT: 3003
+      PORT: 5000
     networks:
       - nexus-network
     restart: unless-stopped
@@ -99,20 +100,21 @@ services:
     container_name: nexus-chat-service
     environment:
       NODE_ENV: production
-      PORT: 3004
+      PORT: 6000
     networks:
       - nexus-network
     restart: unless-stopped
 
-  # ai-service binds a local GPU today; see ARCHITECTURE.md before containerizing.
+  # ai-service is Python/FastAPI (uvicorn, main.py) — not Node — and additionally
+  # depends on Ollama (11434) and Qdrant (6333), which are NOT defined here yet.
+  # It also binds a local GPU today; see ARCHITECTURE.md before containerizing.
   ai-service:
     build:
       context: ../ai-service
       dockerfile: Dockerfile
     container_name: nexus-ai-service
     environment:
-      NODE_ENV: production
-      PORT: 3005
+      PORT: 6001
     networks:
       - nexus-network
     restart: unless-stopped

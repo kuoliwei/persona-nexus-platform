@@ -1,46 +1,58 @@
-# Caddy reverse proxy — MANUAL / HOST development mode
-# =====================================================
-# Use this when running everything directly on the host (no Docker):
-#   caddy run --config ./Caddyfile --adapter caddyfile
-# with the four Vite dev servers + api-gateway running on localhost.
+# Caddy — LOCAL DEVELOPMENT (Vite dev servers, hot reload)
+# =========================================================
+# Everything is served from ONE origin: http://localhost:8080
+# Opening a Vite port directly (5173/5175/...) does NOT work any more — the
+# frontends call the API with relative paths (/api/...), which only reach the
+# gateway when the request goes through this proxy.
 #
-# For docker-compose, use Caddyfile.docker instead (service names, not localhost).
+# Upstream host is configurable so one file covers both ways of running Caddy:
 #
-# Routing (single origin, path-based):
-#   /api/*      → api-gateway (8000)
-#   /login*     → auth frontend      (Vite base /login/)
-#   /character* → character frontend (Vite base /character/)
-#   /chat*      → chat frontend      (Vite base /chat/)
-#   everything else → lobby frontend (Vite base /)   [default fallback]
+#   native  :  caddy run --config ./Caddyfile --adapter caddyfile
+#              (NEXUS_UPSTREAM_HOST unset -> localhost)
+#
+#   docker  :  docker run --rm -p 8080:8080 \
+#                --add-host host.docker.internal:host-gateway \
+#                -e NEXUS_UPSTREAM_HOST=host.docker.internal \
+#                -v <abs>/deploy/Caddyfile:/etc/caddy/Caddyfile:ro caddy:2-alpine
+#              (the container's own localhost is not the host)
+#
+# For the built-static deployment, use Caddyfile.docker instead.
+#
+# Routing:
+#   /api/*      -> api-gateway 8000
+#   /login*     -> auth      5173  (Vite base /login/)
+#   /character* -> character 5174  (Vite base /character/)
+#   /chat*      -> chat      5176  (Vite base /chat/)
+#   everything else -> lobby 5175  (Vite base /)   [default, must stay last]
+
+{
+	auto_https off
+}
 
 :8080 {
 	log {
 		level DEBUG
 	}
 
-	# API Gateway — all /api/* requests. Must come before the lobby fallback.
 	handle /api/* {
-		reverse_proxy localhost:8000
+		reverse_proxy {$NEXUS_UPSTREAM_HOST:localhost}:8000
 	}
 
-	# Auth frontend
 	handle /login* {
-		reverse_proxy localhost:5173
+		reverse_proxy {$NEXUS_UPSTREAM_HOST:localhost}:5173
 	}
 
-	# Character frontend
 	handle /character* {
-		reverse_proxy localhost:5174
+		reverse_proxy {$NEXUS_UPSTREAM_HOST:localhost}:5174
 	}
 
-	# Chat frontend
 	handle /chat* {
-		reverse_proxy localhost:5176
+		reverse_proxy {$NEXUS_UPSTREAM_HOST:localhost}:5176
 	}
 
-	# Lobby frontend — default handler.
-	# Catches "/", "/assets/*", and any path not matched above.
+	# Lobby is the default handler: "/", "/assets/*", "/src/*.html", and client
+	# routes such as /my-characters all land here.
 	handle {
-		reverse_proxy localhost:5175
+		reverse_proxy {$NEXUS_UPSTREAM_HOST:localhost}:5175
 	}
 }
