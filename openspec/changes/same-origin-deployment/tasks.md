@@ -57,14 +57,14 @@
 
 ## 5. 前端配置中心簡化（1-2h）
 
-- [ ] 5.1 檢查四個前端的 `config-loader.js`，簡化 `frontends` 物件（可移除各前端網址清單）
-- [ ] 5.2 驗證前端啟動時不再依賴 `config.frontends.xxx` 這類數據（改用相對路徑跳轉）
+- [x] 5.1 檢查四個前端的 `config-loader.js`，簡化 `frontends` 物件（可移除各前端網址清單）
+- [x] 5.2 驗證前端啟動時不再依賴 `config.frontends.xxx` 這類數據（改用相對路徑跳轉）
 
 ## 6. CORS 與安全規則（1-2h）
 
-- [ ] 6.1 api-gateway `src/config/services.js` 或 CORS 設定：更新 `FRONTEND_ORIGIN` 允許清單，同源後可大幅簡化（例如只需 `http://localhost` 或 `persona-nexus.com`）
-- [ ] 6.2 api-gateway `/internal/*` 的 IP 白名單檢查：確保用 Docker 服務名（`gateway` 等）而非硬 IP，避免容器重啟後失效
-- [ ] 6.3 驗證：訪問 `/api/internal/rag/conversations` 時被 gateway 攔截（401 或 IP 白名單失敗）
+- [x] 6.1 api-gateway `src/config/services.js` 或 CORS 設定：更新 `FRONTEND_ORIGIN` 允許清單，同源後可大幅簡化（例如只需 `http://localhost` 或 `persona-nexus.com`）
+- [x] 6.2 api-gateway `/internal/*` 的 IP 白名單檢查：確保用 Docker 服務名（`gateway` 等）而非硬 IP，避免容器重啟後失效
+- [x] 6.3 驗證：訪問 `/api/internal/rag/conversations` 時被 gateway 攔截（401 或 IP 白名單失敗）
 
 ## 7. 整合測試（2-3h）
 
@@ -100,9 +100,14 @@ Caddyfile 拆成兩份：`Caddyfile`（主機模式，proxy 到 dev server）與
 - 既有缺陷：lobby 執行期 fetch 的 5 個 HTML 片段未進 dist，已移至 `public/src/`
 - 既有缺陷：character 多頁入口未列入 Vite build input
 
+**Phase 5-6 補充**：
+- `/api/config` 已移除 `services`/`frontends` 網址清單，只回 `{ apiBase, environment }`；端點保留作為前端啟動時的後端可達性探測
+- CORS 改為 opt-in：`FRONTEND_ORIGIN` 預設為空時完全不掛 `cors()`。實測即使帶 `Origin` 標頭也不回傳任何 `Access-Control-*`
+- `internalAuthMiddleware` 原本的私有網段判斷漏了 `172.16.0.0/12`（Docker 預設 bridge 網段），容器互打 `/internal/*` 會被自己擋掉；已改寫並以 15 個邊界案例覆蓋
+- chat 前端已完全不需要設定，`config-loader.js` 已刪除
+
 **仍未完成（docker 模式的最後阻礙）**：
 - [ ] 各後端專案（api-gateway、auth/user/character/chat/ai-service）尚無 `Dockerfile`，`docker-compose up --build` 會失敗
-- [ ] `/api/config` 仍回傳含寫死 localhost 的 `frontends` 物件（已無前端讀取，待 Phase 5 清理）
 
 ## 檢查與驗收標準
 

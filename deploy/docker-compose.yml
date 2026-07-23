@@ -44,8 +44,8 @@ services:
       CHARACTER_SERVICE_URL: http://character-service:3003
       CHAT_SERVICE_URL: http://chat-service:3004
       AI_SERVICE_URL: http://ai-service:3005
-      # Same-origin: the browser only ever talks to Caddy's origin
-      FRONTEND_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost:8080}
+      # FRONTEND_ORIGIN is deliberately unset: the browser reaches this gateway
+      # through Caddy on the same origin, so CORS is neither needed nor enabled.
     networks:
       - nexus-network
     depends_on:
