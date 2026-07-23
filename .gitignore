@@ -5,6 +5,12 @@ user-service/
 character-service/
 chat-service/
 
+# Frontend projects (separate git repos, tracked separately)
+persona-nexus-auth/
+persona-nexus-character/
+persona-nexus-chat/
+persona-nexus-lobby/
+
 # Node modules and dependencies
 node_modules/
 *.log
@@ -12,11 +18,9 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Build outputs (temporary, regenerated)
-# Note: Frontend projects (persona-nexus-*) are tracked for source code only
-persona-nexus-*/dist/
-persona-nexus-*/node_modules/
-persona-nexus-*/build/
+# Build outputs
+dist/
+build/
 
 # Environment files
 .env
