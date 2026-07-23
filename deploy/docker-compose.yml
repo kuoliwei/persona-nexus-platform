@@ -105,9 +105,18 @@ services:
       - nexus-network
     restart: unless-stopped
 
-  # ai-service is Python/FastAPI (uvicorn, main.py) — not Node — and additionally
-  # depends on Ollama (11434) and Qdrant (6333), which are NOT defined here yet.
-  # It also binds a local GPU today; see ARCHITECTURE.md before containerizing.
+  # ai-service is Python/FastAPI (uvicorn main.py), not Node.
+  #
+  # Locally it runs in a dedicated conda env named "ai-service"
+  # (see start-all-services.bat). A container does not need conda — its
+  # requirements.txt is plain pip: fastapi, uvicorn, langchain, ollama,
+  # qdrant-client, numpy. So its Dockerfile is an ordinary python:slim image.
+  #
+  # It carries NO GPU code of its own: it is an HTTP client that delegates
+  # inference to Ollama (11434) and vector search to Qdrant (6333). The GPU
+  # belongs to Ollama. Neither of those is defined here yet, so ai-service
+  # cannot work under compose until they are — Ollama in particular needs GPU
+  # passthrough and a volume for downloaded models.
   ai-service:
     build:
       context: ../ai-service
@@ -115,17 +124,12 @@ services:
     container_name: nexus-ai-service
     environment:
       PORT: 6001
+      # Point at Ollama/Qdrant once they are added as services here.
+      # OLLAMA_HOST: http://ollama:11434
+      # QDRANT_URL: http://qdrant:6333
     networks:
       - nexus-network
     restart: unless-stopped
-    # GPU passthrough (uncomment when the host exposes an NVIDIA runtime):
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities: [gpu]
 
 networks:
   nexus-network:
