@@ -109,13 +109,19 @@ echo.
 echo   Do NOT open 5173/5174/5175/5176 directly. The frontends call the API with
 echo   relative paths, so those ports only work through the proxy above.
 echo.
-echo Individual services (for debugging):
-echo   auth-service: http://localhost:3000
-echo   user-service: http://localhost:4000
-echo   character-service: http://localhost:5000
-echo   chat-service: http://localhost:6000
-echo   ai-service: http://localhost:6001
-echo   api-gateway: http://localhost:8000
+echo Individual services (for debugging only - see the warning above):
+echo   backend:
+echo     auth-service:      http://localhost:3000
+echo     user-service:      http://localhost:4000
+echo     character-service: http://localhost:5000
+echo     chat-service:      http://localhost:6000
+echo     ai-service:        http://localhost:6001
+echo     api-gateway:       http://localhost:8000
+echo   frontend (Vite dev servers):
+echo     persona-nexus-auth:      http://localhost:5173  (served at /login)
+echo     persona-nexus-character: http://localhost:5174  (served at /character)
+echo     persona-nexus-lobby:     http://localhost:5175  (served at /)
+echo     persona-nexus-chat:      http://localhost:5176  (served at /chat)
 echo.
 echo Note: ai-service also needs Ollama (11434) and Qdrant (6333) running.
 echo   Stop the proxy with: docker stop nexus-caddy

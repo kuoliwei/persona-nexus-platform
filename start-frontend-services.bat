@@ -52,6 +52,13 @@ echo.
 echo   Backend services are NOT started by this script - run
 echo   start-backend-services.bat as well, or API calls will fail.
 echo.
+echo Individual services (for debugging only - see the warning above):
+echo   api-gateway:             http://localhost:8000
+echo   persona-nexus-auth:      http://localhost:5173  (served at /login)
+echo   persona-nexus-character: http://localhost:5174  (served at /character)
+echo   persona-nexus-lobby:     http://localhost:5175  (served at /)
+echo   persona-nexus-chat:      http://localhost:5176  (served at /chat)
+echo.
 echo   Stop the proxy with: docker stop nexus-caddy
 echo.
 pause
