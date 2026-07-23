@@ -24,7 +24,6 @@
 #   /character* -> character 5174  (Vite base /character/)
 #   /chat*      -> chat      5176  (Vite base /chat/)
 #   everything else -> lobby 5175  (Vite base /)   [default, must stay last]
-
 {
 	auto_https off
 }
@@ -39,14 +38,23 @@
 	}
 
 	handle /login* {
+		# 正規化：/login -> /login/（Vite base 是 /login/，少了結尾斜線會 404）
+		redir /login /login/
+
 		reverse_proxy {$NEXUS_UPSTREAM_HOST:localhost}:5173
 	}
 
 	handle /character* {
+		# 正規化：/character -> /character/（Vite base 是 /character/，少了結尾斜線會 404）
+		redir /character /character/
+
 		reverse_proxy {$NEXUS_UPSTREAM_HOST:localhost}:5174
 	}
 
 	handle /chat* {
+		# 正規化：/chat -> /chat/（Vite base 是 /chat/，少了結尾斜線會 404）
+		redir /chat /chat/
+
 		reverse_proxy {$NEXUS_UPSTREAM_HOST:localhost}:5176
 	}
 

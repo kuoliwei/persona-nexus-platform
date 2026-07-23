@@ -36,6 +36,9 @@
 
 	# --- Auth frontend ---
 	handle /login* {
+		# 正規化：/login -> /login/（Vite base 是 /login/，少了結尾斜線會 404）
+		redir /login /login/
+
 		root * /srv/auth
 		uri strip_prefix /login
 		try_files {path} /index.html
@@ -44,6 +47,9 @@
 
 	# --- Character frontend (multi-page: index, creator-create, creator-edit) ---
 	handle /character* {
+		# 正規化：/character -> /character/（Vite base 是 /character/，少了結尾斜線會 404）
+		redir /character /character/
+
 		root * /srv/character
 		uri strip_prefix /character
 		try_files {path} /index.html
@@ -52,6 +58,9 @@
 
 	# --- Chat frontend ---
 	handle /chat* {
+		# 正規化：/chat -> /chat/（Vite base 是 /chat/，少了結尾斜線會 404）
+		redir /chat /chat/
+
 		root * /srv/chat
 		uri strip_prefix /chat
 		try_files {path} /index.html
