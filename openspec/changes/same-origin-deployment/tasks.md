@@ -2,58 +2,58 @@
 
 ## 1. 準備與基礎設施（2-3h）
 
-- [ ] 1.1 根目錄 `git init`，建 `.gitignore` 排除 `ai-service/`, `auth-service/`, `user-service/`, `character-service/`, `chat-service/`, `persona-nexus-*` 等微服務資料夾
-- [ ] 1.2 建立 `deploy/` 目錄，新增 `Caddyfile`（開發環境 `:8080` 配置）
-- [ ] 1.3 編寫 `deploy/docker-compose.yml`，定義 Caddy + 四個前端 build + gateway + 後端服務容器
-- [ ] 1.4 建 `deploy/README.md`，文檔化啟動步驟、環境變數、健康檢查方法
-- [ ] 1.5 驗證：本地 `cd deploy && docker-compose config` 語法檢查通過
+- [x] 1.1 根目錄 `git init`，建 `.gitignore` 排除 `ai-service/`, `auth-service/`, `user-service/`, `character-service/`, `chat-service/`, `persona-nexus-*` 等微服務資料夾
+- [x] 1.2 建立 `deploy/` 目錄，新增 `Caddyfile`（開發環境 `:8080` 配置）
+- [x] 1.3 編寫 `deploy/docker-compose.yml`，定義 Caddy + 四個前端 build + gateway + 後端服務容器
+- [x] 1.4 建 `deploy/README.md`，文檔化啟動步驟、環境變數、健康檢查方法
+- [x] 1.5 驗證：本地 `cd deploy && docker-compose config` 語法檢查通過
 
 ## 2. API Gateway 路由重構（3-4h）
 
-- [ ] 2.1 api-gateway `src/app.js`：修改所有 `app.use()` 路由，統一加 `/api` 前綴
+- [x] 2.1 api-gateway `src/app.js`：修改所有 `app.use()` 路由，統一加 `/api` 前綴
   - `/auth/*` → `/api/auth/*`
   - `/users/*` → `/api/users/*`
   - `/characters/*` → `/api/characters/*`
   - `/conversations/*` → `/api/conversations/*`
   - `/api/config` 保持不變（已正確）
   - `/internal/*` 路由保持不變但禁止對外暴露
-- [ ] 2.2 api-gateway 各 proxy 檔（authProxy.js、userProxy.js 等）的 `pathRewrite` 邏輯隨之調整（檢查轉發到後端的路徑仍正確）
-- [ ] 2.3 更新 `.env.example`：新增 `CADDY_DOMAIN`、`CADDY_PORT` 等
-- [ ] 2.4 驗證：gateway 啟動後，`curl http://localhost:8000/api/config` 回傳 200 OK
+- [x] 2.2 api-gateway 各 proxy 檔（authProxy.js、userProxy.js 等）的 `pathRewrite` 邏輯隨之調整（檢查轉發到後端的路徑仍正確）
+- [x] 2.3 更新 `.env.example`：新增 `CADDY_DOMAIN`、`CADDY_PORT` 等
+- [x] 2.4 驗證：gateway 啟動後，`curl http://localhost:8000/api/config` 回傳 200 OK
 
 ## 3. 前端 JavaScript 改造——相對路徑（8-10h，四個前端平行進行）
 
 ### 3.1 persona-nexus-auth
-- [ ] 3.1.1 `src/api.js`：`const BASE_URL = 'http://localhost:8000'` → 移除或改相對 `/api`
-- [ ] 3.1.2 所有 `fetch()` 改為相對路徑（`fetch('/api/auth/register')` 等）
-- [ ] 3.1.3 `src/config-loader.js`：`fetch('http://localhost:8000/api/config')` → `fetch('/api/config')`
-- [ ] 3.1.4 跨前端跳轉（登入成功後跳大廳）改為 `window.location.href = '/'`
+- [x] 3.1.1 `src/api.js`：`const BASE_URL = 'http://localhost:8000'` → 移除或改相對 `/api`
+- [x] 3.1.2 所有 `fetch()` 改為相對路徑（`fetch('/api/auth/register')` 等）
+- [x] 3.1.3 `src/config-loader.js`：`fetch('http://localhost:8000/api/config')` → `fetch('/api/config')`
+- [x] 3.1.4 跨前端跳轉（登入成功後跳大廳）改為 `window.location.href = '/'`
 
 ### 3.2 persona-nexus-character
-- [ ] 3.2.1 `src/api.js`：`const BASE_URL = 'http://localhost:8000'` → 相對路徑
-- [ ] 3.2.2 所有 `fetch()` 改為相對路徑
-- [ ] 3.2.3 `src/config-loader.js` 改為相對路徑
-- [ ] 3.2.4 跨前端跳轉（返回大廳、返回登入）改為相對路徑
+- [x] 3.2.1 `src/api.js`：`const BASE_URL = 'http://localhost:8000'` → 相對路徑
+- [x] 3.2.2 所有 `fetch()` 改為相對路徑
+- [x] 3.2.3 `src/config-loader.js` 改為相對路徑
+- [x] 3.2.4 跨前端跳轉（返回大廳、返回登入）改為相對路徑
 
 ### 3.3 persona-nexus-lobby
-- [ ] 3.3.1 `src/api.js`：改相對路徑
-- [ ] 3.3.2 所有 `fetch()` 改為相對路徑
-- [ ] 3.3.3 `src/config-loader.js` 改為相對路徑
-- [ ] 3.3.4 跨前端跳轉改為相對路徑
+- [x] 3.3.1 `src/api.js`：改相對路徑
+- [x] 3.3.2 所有 `fetch()` 改為相對路徑
+- [x] 3.3.3 `src/config-loader.js` 改為相對路徑
+- [x] 3.3.4 跨前端跳轉改為相對路徑
 
 ### 3.4 persona-nexus-chat
-- [ ] 3.4.1 `src/chat.js`：`const GATEWAY_URL = 'http://localhost:8000'` → 移除，改用 `/api/...`
-- [ ] 3.4.2 所有 `fetch()` 改為相對路徑
-- [ ] 3.4.3 `src/config-loader.js` 改為相對路徑
-- [ ] 3.4.4 跨前端跳轉改為相對路徑
+- [x] 3.4.1 `src/chat.js`：`const GATEWAY_URL = 'http://localhost:8000'` → 移除，改用 `/api/...`
+- [x] 3.4.2 所有 `fetch()` 改為相對路徑
+- [x] 3.4.3 `src/config-loader.js` 改為相對路徑
+- [x] 3.4.4 跨前端跳轉改為相對路徑
 
 ## 4. 前端 Vite 配置——base 設定（1-2h，四個前端平行進行）
 
-- [ ] 4.1 persona-nexus-auth `vite.config.js`：加 `base: '/login/'`
-- [ ] 4.2 persona-nexus-character `vite.config.js`：加 `base: '/character/'`
-- [ ] 4.3 persona-nexus-lobby `vite.config.js`：加 `base: '/'` （或確認未設 base，預設即為 `/`）
-- [ ] 4.4 persona-nexus-chat `vite.config.js`：加 `base: '/chat/'`
-- [ ] 4.5 驗證：各前端 `npm run build` 產生的 `dist/index.html` 裡，`<script src="/...">` 路徑包含正確的前綴（e.g., `/login/src/main.js`）
+- [x] 4.1 persona-nexus-auth `vite.config.js`：加 `base: '/login/'`
+- [x] 4.2 persona-nexus-character `vite.config.js`：加 `base: '/character/'`
+- [x] 4.3 persona-nexus-lobby `vite.config.js`：加 `base: '/'` （或確認未設 base，預設即為 `/`）
+- [x] 4.4 persona-nexus-chat `vite.config.js`：加 `base: '/chat/'`
+- [x] 4.5 驗證：各前端 `npm run build` 產生的 `dist/index.html` 裡，`<script src="/...">` 路徑包含正確的前綴（e.g., `/login/src/main.js`）
 
 ## 5. 前端配置中心簡化（1-2h）
 
@@ -85,6 +85,24 @@
 - [ ] 8.2 更新各微服務的 `.env.example`：確認新增的環境變數都列上（如 `CADDY_DOMAIN`）
 - [ ] 8.3 驗證：根目錄已納入版本控制（.gitignore 正確、可 `git status`）
 - [ ] 8.4 建立或更新 `CONTRIBUTING.md`：新開發者怎麼用 docker-compose 起環境
+
+## 實作偏離與待辦（Phase 1-4 驗證後更新）
+
+**部署模型變更**：前端改為「主機建置靜態檔、Caddy 直接 serve」，不再於容器內跑 Vite dev server。
+因此 docker-compose 移除四個前端服務，改掛載各自 `dist/`；Vite 也不需要 `host: '0.0.0.0'`。
+Caddyfile 拆成兩份：`Caddyfile`（主機模式，proxy 到 dev server）與 `Caddyfile.docker`（靜態 serve）。
+
+**驗證中發現並修正的缺陷**：
+- `app.use('/api/x', proxy)` 會剝除掛載前綴，故 character/chat proxy 的 regex pathRewrite 完全失效，已改回函式 prepend 形式
+- Caddyfile 原有的 `@notapi`/`file`/`try_files` 區塊無效；`handle /` 只匹配根路徑，會漏掉 `/assets/*`
+- 前端仍有約 10 處跨源網址未轉換（含 HTML 內嵌腳本），以及 `//?token=`、`//my-characters` 兩類協定相對 URL bug
+- 既有缺陷：character/index.html import 了不存在的 `getConfig`，production build 本來就失敗
+- 既有缺陷：lobby 執行期 fetch 的 5 個 HTML 片段未進 dist，已移至 `public/src/`
+- 既有缺陷：character 多頁入口未列入 Vite build input
+
+**仍未完成（docker 模式的最後阻礙）**：
+- [ ] 各後端專案（api-gateway、auth/user/character/chat/ai-service）尚無 `Dockerfile`，`docker-compose up --build` 會失敗
+- [ ] `/api/config` 仍回傳含寫死 localhost 的 `frontends` 物件（已無前端讀取，待 Phase 5 清理）
 
 ## 檢查與驗收標準
 
