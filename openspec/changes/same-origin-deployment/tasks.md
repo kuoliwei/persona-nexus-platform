@@ -68,16 +68,16 @@
 
 ## 7. 整合測試（2-3h）
 
-- [ ] 7.1 本機起 Caddy (8080)、四個前端 dev server、gateway、後端服務
+- [x] 7.1 本機起 Caddy (8080)、四個前端 dev server、gateway、後端服務
   - 方式 A：Docker compose（`docker-compose up -d` 在 `deploy/` 目錄）
   - 方式 B：手動逐個啟動（適合開發 debug）
-- [ ] 7.2 測試路由分流：
+- [x] 7.2 測試路由分流：
   - `curl http://localhost:8080/` → 拿到 lobby 首頁 HTML
   - `curl http://localhost:8080/login` → 拿到 auth 首頁 HTML
   - `curl http://localhost:8080/api/config` → gateway 回傳 JSON
-- [ ] 7.3 測試 API 呼叫：前端打 `/api/auth/login`、`/api/characters` 等
-- [ ] 7.4 測試跨前端跳轉：lobby → login → character → chat，確保相對路徑生效
-- [ ] 7.5 測試單頁應用回退：訪問 `http://localhost:8080/chat/conversation/123`（不存在的靜態檔），應回傳 chat 的 `index.html`
+- [x] 7.3 測試 API 呼叫：前端打 `/api/auth/login`、`/api/characters` 等
+- [x] 7.4 測試跨前端跳轉：lobby → login → character → chat，確保相對路徑生效
+- [x] 7.5 測試單頁應用回退：訪問 `http://localhost:8080/chat/conversation/123`（不存在的靜態檔），應回傳 chat 的 `index.html`
 
 ## 8. 文件與交付（1-2h）
 
@@ -105,6 +105,18 @@ Caddyfile 拆成兩份：`Caddyfile`（主機模式，proxy 到 dev server）與
 - CORS 改為 opt-in：`FRONTEND_ORIGIN` 預設為空時完全不掛 `cors()`。實測即使帶 `Origin` 標頭也不回傳任何 `Access-Control-*`
 - `internalAuthMiddleware` 原本的私有網段判斷漏了 `172.16.0.0/12`（Docker 預設 bridge 網段），容器互打 `/internal/*` 會被自己擋掉；已改寫並以 15 個邊界案例覆蓋
 - chat 前端已完全不需要設定，`config-loader.js` 已刪除
+
+**Phase 7 整合測試結果（全服務實機啟動）**：
+- 路由分流、SPA 深層回退、四個前端身分辨識全部通過
+- 真實 API 流程通過同源 :8080 驗證：註冊 201、登入 200、 讀寫、、
+- 未帶 token 的  正確回 401
+-  在 :8080 落到 lobby SPA fallback（回 HTML），未對外暴露；直連 :8000 才會進到 ai-service
+- 修正：、、 無結尾斜線時 404（Vite base 不匹配），已於 Caddy 加正規化重導
+- 修正： 因缺少 pathRewrite 一律 404（既有缺陷，早於本次改造）
+- 7.4 說明：跨前端目標路徑均已驗證可正確解析到對應應用；實際瀏覽器點擊流程未以 curl 覆蓋
+
+**發現的安全問題（不在本次範圍，需另案處理）**：
+-  回傳完整使用者物件，**包含 bcrypt 密碼雜湊**。此端點先前因 404 而未被觸及，修好路由後這個外洩就變成實際可達。應在 user-service 的 controller 移除 password 欄位。
 
 **仍未完成（docker 模式的最後阻礙）**：
 - [ ] 各後端專案（api-gateway、auth/user/character/chat/ai-service）尚無 `Dockerfile`，`docker-compose up --build` 會失敗
