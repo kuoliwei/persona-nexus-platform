@@ -1,0 +1,485 @@
+<!doctype html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Persona Nexus — 同源部署對照</title>
+<style>
+  :root {
+    --bg: #eceff4;
+    --panel: #ffffff;
+    --ink: #1a1f29;
+    --ink-soft: #565f70;
+    --line: #d3d9e3;
+    --line-strong: #b3bccb;
+    --accent: #3b6fe0;        /* 藍圖藍 */
+    --accent-soft: #e6edfb;
+    --warn: #c2410c;          /* 問題／跨源 */
+    --warn-soft: #fbeadf;
+    --good: #1f7a55;          /* 同源／解決 */
+    --good-soft: #dcefe6;
+    --internal: #6b4fbb;      /* 內網 */
+    --internal-soft: #ece6f8;
+    --mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    --sans: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f131a;
+      --panel: #171d27;
+      --ink: #e6eaf2;
+      --ink-soft: #97a1b3;
+      --line: #2a323f;
+      --line-strong: #3a4453;
+      --accent: #6b97f0;
+      --accent-soft: #1c2740;
+      --warn: #f0925e;
+      --warn-soft: #34210f;
+      --good: #55c496;
+      --good-soft: #12291f;
+      --internal: #a58ce6;
+      --internal-soft: #201a33;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f131a; --panel: #171d27; --ink: #e6eaf2; --ink-soft: #97a1b3;
+    --line: #2a323f; --line-strong: #3a4453; --accent: #6b97f0; --accent-soft: #1c2740;
+    --warn: #f0925e; --warn-soft: #34210f; --good: #55c496; --good-soft: #12291f;
+    --internal: #a58ce6; --internal-soft: #201a33;
+  }
+  :root[data-theme="light"] {
+    --bg: #eceff4; --panel: #ffffff; --ink: #1a1f29; --ink-soft: #565f70;
+    --line: #d3d9e3; --line-strong: #b3bccb; --accent: #3b6fe0; --accent-soft: #e6edfb;
+    --warn: #c2410c; --warn-soft: #fbeadf; --good: #1f7a55; --good-soft: #dcefe6;
+    --internal: #6b4fbb; --internal-soft: #ece6f8;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+    line-height: 1.6;
+    padding: 40px 24px 64px;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; }
+
+  header.page { margin-bottom: 40px; }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 10px;
+  }
+  h1 {
+    font-size: clamp(26px, 4vw, 38px);
+    margin: 0 0 12px;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+  }
+  .lede {
+    color: var(--ink-soft);
+    max-width: 68ch;
+    margin: 0;
+    font-size: 16px;
+  }
+
+  .cols {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+  @media (min-width: 900px) {
+    .cols { grid-template-columns: 1fr 1fr; gap: 20px; }
+  }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 22px 20px 24px;
+    display: flex;
+    flex-direction: column;
+  }
+  .panel-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 4px 10px;
+    border-radius: 20px;
+    align-self: flex-start;
+    margin-bottom: 6px;
+  }
+  .tag-now { background: var(--warn-soft); color: var(--warn); }
+  .tag-after { background: var(--good-soft); color: var(--good); }
+  .panel h2 {
+    font-size: 19px;
+    margin: 6px 0 4px;
+  }
+  .panel .sub {
+    color: var(--ink-soft);
+    font-size: 13.5px;
+    margin: 0 0 18px;
+  }
+
+  /* diagram node stack */
+  .flow { display: flex; flex-direction: column; align-items: stretch; gap: 0; }
+  .node {
+    border: 1px solid var(--line-strong);
+    border-radius: 9px;
+    padding: 11px 13px;
+    background: var(--bg);
+  }
+  .node .role { font-size: 13px; font-weight: 600; }
+  .node .addr {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--ink-soft);
+    margin-top: 2px;
+    word-break: break-all;
+  }
+  .node.browser { border-color: var(--accent); background: var(--accent-soft); }
+  .node.entry   { border-color: var(--accent); border-width: 2px; }
+  .node.internal { border-style: dashed; }
+
+  .box-group {
+    border: 1px dashed var(--line-strong);
+    border-radius: 10px;
+    padding: 12px 12px 6px;
+    margin-top: 2px;
+  }
+  .box-group .box-label {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--internal);
+    margin: 0 0 10px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .box-group.machines { border-color: var(--internal); background: var(--internal-soft); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .grid2 .node { background: var(--panel); }
+
+  .arrow {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 3px 0;
+    color: var(--ink-soft);
+  }
+  .arrow .lbl {
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 1px 8px;
+    border-radius: 4px;
+    background: var(--line);
+    color: var(--ink);
+    margin-bottom: 1px;
+    white-space: nowrap;
+  }
+  .arrow.warn .lbl { background: var(--warn-soft); color: var(--warn); }
+  .arrow.good .lbl { background: var(--good-soft); color: var(--good); }
+  .arrow .stem { font-size: 15px; line-height: 1; }
+
+  .callouts { margin-top: 18px; display: flex; flex-direction: column; gap: 9px; }
+  .callout {
+    display: flex;
+    gap: 9px;
+    font-size: 13px;
+    color: var(--ink-soft);
+    align-items: baseline;
+  }
+  .callout .mk { flex-shrink: 0; font-size: 13px; }
+  .callout.bad .mk { color: var(--warn); }
+  .callout.ok .mk { color: var(--good); }
+  .callout code {
+    font-family: var(--mono);
+    font-size: 12px;
+    background: var(--bg);
+    padding: 1px 5px;
+    border-radius: 4px;
+    border: 1px solid var(--line);
+    color: var(--ink);
+  }
+
+  /* what changes */
+  .changes {
+    margin-top: 32px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .changes h2 {
+    font-size: 18px;
+    margin: 0;
+    padding: 18px 22px 14px;
+    border-bottom: 1px solid var(--line);
+  }
+  table { width: 100%; border-collapse: collapse; }
+  th, td {
+    text-align: left;
+    padding: 12px 22px;
+    font-size: 13.5px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  th {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    font-weight: 600;
+  }
+  tr:last-child td { border-bottom: none; }
+  td.what { font-weight: 600; width: 26%; }
+  td code {
+    font-family: var(--mono);
+    font-size: 12px;
+    background: var(--bg);
+    padding: 1px 5px;
+    border-radius: 4px;
+    border: 1px solid var(--line);
+    color: var(--ink);
+    word-break: break-all;
+  }
+  .effort {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    padding: 2px 8px;
+    border-radius: 20px;
+    letter-spacing: 0.05em;
+  }
+  .effort.lo { background: var(--good-soft); color: var(--good); }
+  .effort.mid { background: var(--accent-soft); color: var(--accent); }
+  .effort.new { background: var(--internal-soft); color: var(--internal); }
+
+  .foot {
+    margin-top: 22px;
+    font-size: 13px;
+    color: var(--ink-soft);
+    border-left: 3px solid var(--accent);
+    padding: 4px 0 4px 14px;
+  }
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin: 26px 0 4px;
+    font-size: 12px;
+    color: var(--ink-soft);
+  }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .sw { width: 22px; height: 12px; border-radius: 3px; border: 1px solid var(--line-strong); display: inline-block; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="page">
+    <p class="eyebrow">Persona Nexus · 部署架構對照</p>
+    <h1>現在的多源架構 → 同源部署</h1>
+    <p class="lede">
+      左邊是你現在的樣子：瀏覽器直接連 5 個不同 port，前端得知道每個對外網址。
+      右邊是同源部署：瀏覽器只認一個網址，反向代理在內部分流。差別不在後端搬到哪，而在「對瀏覽器暴露幾個入口」。
+    </p>
+  </header>
+
+  <div class="cols">
+
+    <!-- ================= NOW ================= -->
+    <section class="panel">
+      <span class="panel-tag tag-now">◇ 現在 · 多源</span>
+      <h2>瀏覽器直連每個 port</h2>
+      <p class="sub">前端與 gateway 各佔一個 port，瀏覽器看到 5 個不同 origin。</p>
+
+      <div class="flow">
+        <div class="node browser">
+          <div class="role">使用者瀏覽器</div>
+          <div class="addr">開發機 localhost</div>
+        </div>
+
+        <div class="arrow warn">
+          <span class="lbl">4 個前端 origin + 1 個 API origin</span>
+          <span class="stem">↓</span>
+        </div>
+
+        <div class="grid2">
+          <div class="node"><div class="role">auth 前端</div><div class="addr">:5173</div></div>
+          <div class="node"><div class="role">character 前端</div><div class="addr">:5174</div></div>
+          <div class="node"><div class="role">lobby 前端</div><div class="addr">:5175</div></div>
+          <div class="node"><div class="role">chat 前端</div><div class="addr">:5176</div></div>
+        </div>
+
+        <div class="arrow warn">
+          <span class="lbl">前端 fetch 寫死 :8000（跨 origin）</span>
+          <span class="stem">↓</span>
+        </div>
+
+        <div class="node entry">
+          <div class="role">api-gateway</div>
+          <div class="addr">:8000  /auth /users /characters /conversations</div>
+        </div>
+
+        <div class="arrow">
+          <span class="lbl">gateway 內部轉發</span>
+          <span class="stem">↓</span>
+        </div>
+
+        <div class="box-group machines">
+          <p class="box-label">◈ 後端服務</p>
+          <div class="grid2">
+            <div class="node"><div class="role">auth-service</div><div class="addr">:3000</div></div>
+            <div class="node"><div class="role">user-service</div><div class="addr">:4000</div></div>
+            <div class="node"><div class="role">character-service</div><div class="addr">:5000</div></div>
+            <div class="node"><div class="role">chat-service</div><div class="addr">:6000</div></div>
+            <div class="node"><div class="role">ai-service</div><div class="addr">:6001 · 你的 GPU</div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="callouts">
+        <div class="callout bad"><span class="mk">✕</span><span>瀏覽器看到 <code>:5173</code>~<code>:5176</code> + <code>:8000</code> 共 5 個 origin → <strong>跨源（CORS）</strong>要逐一設允許清單</span></div>
+        <div class="callout bad"><span class="mk">✕</span><span>前端得知道 gateway 與其他前端的每個對外網址（bootstrap 寫死 <code>:8000</code>）</span></div>
+        <div class="callout bad"><span class="mk">✕</span><span>上線後這些 <code>localhost:port</code> 全部要換成公開網址</span></div>
+      </div>
+    </section>
+
+    <!-- ================= AFTER ================= -->
+    <section class="panel">
+      <span class="panel-tag tag-after">◆ 同源部署</span>
+      <h2>瀏覽器只認一個網址</h2>
+      <p class="sub">反向代理當唯一對外入口，依路徑分流，內部網址瀏覽器全看不到。</p>
+
+      <div class="flow">
+        <div class="node browser">
+          <div class="role">使用者瀏覽器</div>
+          <div class="addr">https://persona-nexus.com</div>
+        </div>
+
+        <div class="arrow good">
+          <span class="lbl">單一 origin · 相對路徑 /api、/chat …</span>
+          <span class="stem">↓</span>
+        </div>
+
+        <div class="node entry" style="border-color: var(--good);">
+          <div class="role">反向代理　Nginx / Caddy</div>
+          <div class="addr">:443  唯一公開入口 · 依路徑分流</div>
+        </div>
+
+        <div class="arrow good">
+          <span class="lbl">/api/* → gateway　　其餘 → 前端靜態檔</span>
+          <span class="stem">↓</span>
+        </div>
+
+        <div class="box-group machines">
+          <p class="box-label">◈ 內網 · 瀏覽器看不到</p>
+          <div class="node" style="margin-bottom:8px;">
+            <div class="role">前端靜態檔（4 個 build 後的 dist）</div>
+            <div class="addr">/  /character  /chat …</div>
+          </div>
+          <div class="node entry" style="margin-bottom:8px; border-color: var(--accent);">
+            <div class="role">api-gateway</div>
+            <div class="addr">內網 :8000</div>
+          </div>
+          <div class="grid2">
+            <div class="node internal"><div class="role">auth-service</div><div class="addr">內網 :3000</div></div>
+            <div class="node internal"><div class="role">user-service</div><div class="addr">內網 :4000</div></div>
+            <div class="node internal"><div class="role">character-service</div><div class="addr">內網 :5000</div></div>
+            <div class="node internal"><div class="role">chat-service</div><div class="addr">內網 :6000</div></div>
+            <div class="node internal" style="grid-column: 1 / -1;"><div class="role">ai-service</div><div class="addr">內網 :6001 · 你的 GPU（架構沒變）</div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="callouts">
+        <div class="callout ok"><span class="mk">✓</span><span>瀏覽器只看到 <code>persona-nexus.com</code> 一個 origin → <strong>同源，CORS 消失</strong></span></div>
+        <div class="callout ok"><span class="mk">✓</span><span>前端全用相對路徑 <code>/api/...</code>，一個網址都不用寫死</span></div>
+        <div class="callout ok"><span class="mk">✓</span><span>同源同協定 → 沒有 Mixed Content；HTTPS 由代理這層統一處理</span></div>
+      </div>
+    </section>
+
+  </div>
+
+  <div class="legend">
+    <span><span class="sw" style="background: var(--accent-soft); border-color: var(--accent);"></span>對外入口 / 瀏覽器</span>
+    <span><span class="sw" style="background: var(--internal-soft); border-color: var(--internal);"></span>內網（瀏覽器看不到）</span>
+    <span><span class="sw" style="background: var(--warn-soft); border-color: var(--warn);"></span>跨源／問題點</span>
+    <span><span class="sw" style="background: var(--good-soft); border-color: var(--good);"></span>同源／已解決</span>
+  </div>
+
+  <!-- ================= WHAT CHANGES ================= -->
+  <div class="changes">
+    <h2>具體要動哪裡</h2>
+    <table>
+      <thead>
+        <tr><th>環節</th><th>現在</th><th>改成同源後</th><th>工作量</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="what">前端 API 呼叫</td>
+          <td>寫死 <code>http://localhost:8000</code></td>
+          <td>相對路徑 <code>/api/...</code>，不寫主機名</td>
+          <td><span class="effort mid">中 · 改 4 個前端</span></td>
+        </tr>
+        <tr>
+          <td class="what">config-loader 設定中心</td>
+          <td>fetch gateway 拿各服務網址</td>
+          <td>大多可移除；同源後前端不需知道網址</td>
+          <td><span class="effort lo">減法</span></td>
+        </tr>
+        <tr>
+          <td class="what">bootstrap gateway 網址</td>
+          <td>雞生蛋：得先寫死才連得上</td>
+          <td>問題消失（相對路徑自動補當前網域）</td>
+          <td><span class="effort lo">自動解決</span></td>
+        </tr>
+        <tr>
+          <td class="what">CORS 允許清單</td>
+          <td>gateway 列 <code>:5173~:5176</code></td>
+          <td>同源，多數情況不再需要</td>
+          <td><span class="effort lo">減法</span></td>
+        </tr>
+        <tr>
+          <td class="what">反向代理</td>
+          <td>無（Vite dev server 各跑各的）</td>
+          <td>新增 Nginx / Caddy 當統一入口 + HTTPS</td>
+          <td><span class="effort new">新元件 · 要學</span></td>
+        </tr>
+        <tr>
+          <td class="what">後端服務</td>
+          <td>各自 localhost port</td>
+          <td>綁內網 port，不對外；架構不變</td>
+          <td><span class="effort lo">幾乎不動</span></td>
+        </tr>
+        <tr>
+          <td class="what">ai-service + GPU</td>
+          <td>本機 GPU 跑 26B</td>
+          <td>一樣綁在你的機器（本次不處理）</td>
+          <td><span class="effort lo">不變</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="foot">
+    重點：你的 api-gateway 已經做了「統一 API 入口」的一半。同源部署要加的，是<strong>再往外包一層反向代理</strong>，
+    讓「前端靜態檔」和「gateway API」共用同一個對外網址。後端彼此怎麼連（同機房、同區網）不受影響——
+    那是內網的事，決定同不同源的只有「對瀏覽器暴露幾個入口」。
+  </p>
+</div>
+
+</body>
+</html>

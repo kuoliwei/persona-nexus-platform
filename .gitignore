@@ -4,6 +4,7 @@ auth-service/
 user-service/
 character-service/
 chat-service/
+api-gateway/
 
 # Frontend projects (separate git repos, tracked separately)
 persona-nexus-auth/
