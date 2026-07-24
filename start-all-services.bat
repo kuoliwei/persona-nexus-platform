@@ -126,4 +126,18 @@ echo.
 echo Note: ai-service also needs Ollama (11434) and Qdrant (6333) running.
 echo   Stop the proxy with: docker stop nexus-caddy
 echo.
+echo ============================================================================
+echo.
+set /p START_NGROK="Do you want to expose the app to the public internet with ngrok? (y/n): "
+if /i "%START_NGROK%"=="y" (
+    echo.
+    echo Starting ngrok...
+    echo   NOTE: Always forward port 8080 (Caddy), not other ports!
+    echo.
+    start "ngrok" cmd /k "cd /d C:\Users\MSI3090\ngrok && .\ngrok.exe http 8080"
+    echo   ngrok will open in a new window. Check it for your public URL.
+    echo   (URL changes every 2 hours on free plan)
+    echo.
+)
+echo.
 pause

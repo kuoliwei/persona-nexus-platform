@@ -81,6 +81,40 @@ start-all-services.bat
 bash start-all-services.sh  # (需自行建立)
 ```
 
+**腳本會自動啟動：**
+- Ollama（LLM，port 11434）
+- Qdrant（向量資料庫，port 6333，Docker）
+- 五個後端服務（3000, 4000, 5000, 6000, 6001）
+- 四個前端 Vite dev server（5173, 5174, 5175, 5176）
+- **Caddy 反向代理（port 8080，Docker）** ← 所有前端都經過這裡
+
+### 本地訪問
+
+開發時一律訪問 **`http://localhost:8080`**，不要直接打 Vite port：
+
+```bash
+http://localhost:8080/          # 首頁（lobby）
+http://localhost:8080/login     # 登入
+http://localhost:8080/character # 角色創建/編輯
+http://localhost:8080/chat      # 聊天室
+http://localhost:8080/api/*     # API gateway
+```
+
+### 公網暴露（ngrok）
+
+若要暴露到公網給內部同仁訪問：
+
+```bash
+cd C:\Users\MSI3090\ngrok
+.\ngrok.exe http 8080
+```
+
+這會輸出公網 URL（例如 `https://budding-savings-broaden.ngrok-free.dev`），可分享給同仁。
+
+⚠️ **重要**：必須轉發 **8080（Caddy）**，不是其他 port。若轉發錯誤，會收到 404。
+
+⚠️ **免費 ngrok 限制**：URL 每 2 小時變一次，需重新啟動 ngrok。要固定 URL 需升級付費版。
+
 ---
 
 ## 倉庫狀態
