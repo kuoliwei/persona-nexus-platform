@@ -2,6 +2,8 @@
 
 本平台採用微服務架構，各服務維護獨立的 git 倉庫。本檔案列出所有服務的倉庫位置。
 
+> 服務間通訊規則（路由、認證、header 契約、回應格式）見 [微服務架構準則.md](微服務架構準則.md) 與 [微服務架構實作spec.md](微服務架構實作spec.md)；整體架構圖見 [ARCHITECTURE.md](ARCHITECTURE.md)。
+
 ## Backend Services
 
 | 服務 | 倉庫 | Port | 技術棧 | 職責 |

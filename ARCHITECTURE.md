@@ -19,23 +19,28 @@
 
 ## 核心架構原則
 
+> 完整的通訊規則、路由表、header 契約、回應格式、非同步狀態管理規範，見 [微服務架構準則.md](微服務架構準則.md)（原則）與 [微服務架構實作spec.md](微服務架構實作spec.md)（具體規格）。本節只做摘要。
+
 ```
                           瀏覽器（各前端 Vite dev server）
                                      │
-          靜態頁面各自提供            │   所有 API 請求一律經過 Gateway
+          靜態頁面各自提供            │   所有 API 請求（/api/*）一律經過 Gateway
                                      ▼
-                          ┌────────────────────┐
-                          │   api-gateway :8000 │  ← 唯一對外入口
-                          │  驗證 JWT，注入      │
-                          │  x-user-id header    │
-                          └─────────┬──────────┘
-                                    │ proxy（各後端不對外暴露）
-        ┌───────────────┬──────────┼───────────┬──────────────┐
-        ▼               ▼          ▼            ▼              ▼
-   auth-service   user-service  character-  chat-service   ai-service
-     :3000          :4000       service      :6000          :6001
-   (註冊/登入        (使用者資料   :5000       (對話訊息      (LLM 生成 +
-    發 JWT)          CRUD)      (角色 CRUD)   儲存)          RAG 記憶)
+                          ┌──────────────────────┐
+                          │    api-gateway :8000   │  ← 唯一對外入口
+                          │  驗證 JWT，注入        │
+                          │  x-user-id header      │
+                          └──────────┬────────────┘
+                                     │ proxy（各後端不對外暴露）
+        ┌────────────────┬──────────┼───────────┬──────────────┐
+        ▼                ▼          ▼            ▼              ▼
+   auth-service    user-service  character-  chat-service   ai-service
+     :3000           :4000       service      :6000          :6001
+   (註冊/登入         (使用者資料   :5000       (對話訊息      (LLM 生成 +
+    發 JWT)           CRUD)      (角色 CRUD)   儲存)          RAG 記憶)
+        │                ▲          ▲            ▲              │
+        └── /internal/users ────────┴────────────┴── /internal/* ┘
+             （服務間通訊也一律經過 Gateway，不直連）
                                                               │
                                                     ┌─────────┴─────────┐
                                                     ▼                   ▼
@@ -43,12 +48,15 @@
                                               (本地 LLM)          (向量資料庫)
 ```
 
-**兩條關鍵鐵則：**
+**三條關鍵鐵則：**
 
 1. **前端從不直接呼叫後端服務，一律打 api-gateway。**
-2. **JWT 驗證只在 gateway 做一次**：gateway 驗證 `Authorization: Bearer <JWT>` 成功後，把使用者 ID 放進 `x-user-id` header 再轉發。後端服務直接信任這個 header，本身不驗 JWT（`auth-service` 除外，它負責簽發）。這是**刻意的架構分工**，前提是後端服務不會被外部直接打到。
+2. **服務間通訊也一律經過 Gateway**：例如 auth-service 建立使用者帳號時，打 Gateway 的 `POST /internal/users`，而不是直連 user-service。這是 2026-07-25 修正的架構調整——早期 auth-service 曾直連 user-service，違反「Gateway 是唯一入口」的原則，已修正。
+3. **兩種驗證機制，適用不同路由**：
+   - **外部路由（`/api/*`）**：Gateway 驗證 `Authorization: Bearer <JWT>` 成功後，把使用者 ID 放進 `x-user-id`（與 `x-user-email`）header 再轉發。後端服務直接信任這個 header，本身不重驗 JWT。
+   - **內部路由（`/internal/*`）**：不驗 JWT，改由 `internalAuthMiddleware` 依來源 IP 判斷（僅允許 `127.0.0.1`／內網），通過後注入 `x-internal-request: true` header。下游服務讀到這個 header 時，會跳過一般的所有權/可見性檢查（例如 ai-service 查詢私有角色詳情、對話歷史）。這個信任機制的前提是下游服務不對外直接開放，是部署層（防火牆、網路隔離）要保證的事，不是程式碼能單獨解決的。
 
-> ⚠️ 唯一例外：`auth-service` 的 `/auth/*` 路由不需要 JWT（本來就是要發 JWT 的），其餘皆需。
+> ⚠️ 唯一例外：`auth-service` 的 `/api/auth/*` 路由不需要 JWT（本來就是要發 JWT 的），其餘 `/api/*` 皆需。
 
 ---
 
@@ -121,6 +129,17 @@ ai-service 組 prompt 時會同時提供：
 
 ---
 
+## 非同步狀態管理
+
+`chat-service` 有兩類非同步任務需要追蹤進度：建立聊天室時的 RAG 初始化流程、發送訊息後的 AI 生成流程。這些狀態**必須持久化**（不得存在進程內記憶體 Map/dict），否則服務重啟會遺失所有進行中任務的狀態、多實例部署時各實例狀態也不共享。
+
+- 建立聊天室流程：狀態存在 `ConversationCreationJob` 表（複合主鍵 `userId + characterId`）
+- AI 生成流程：狀態存在 `Conversation` 表本身的 `generationStatus` 等欄位；同一個欄位也兼職做「拒絕並行生成」的鎖，透過資料庫層級的條件式 `updateMany` 達成原子性（取代進程內 Map 天然的單執行緒同步）
+
+`ai-service` 也有類似的非同步任務狀態（RAG 初始化的 `initialization_jobs`），目前**仍是進程內記憶體**，尚未持久化——因為 ai-service 目前沒有任何關聯式資料庫（只有 Qdrant 向量庫），要持久化這個狀態需要先決定引入什麼樣的儲存方案，這是待決策事項，見 [執行日誌.md](執行日誌.md) T19。
+
+---
+
 ## 啟動方式
 
 根目錄提供批次啟動腳本：
@@ -151,7 +170,9 @@ Qdrant 以 Docker 啟動並掛載既有的 `qdrant_storage` volume，RAG 資料�
 
 ## 架構優化方法論
 
-本平台以「規格驅動」的方式，逐一對各微服務做架構優化。相關方法論文件（皆在根目錄）：
+本平台以「規格驅動」的方式做架構優化，分兩個層次：
+
+**單一服務優化**（相關方法論文件，皆在根目錄）：
 
 | 文件 | 用途 |
 |------|------|
@@ -159,3 +180,15 @@ Qdrant 以 Docker 啟動並掛載既有的 `qdrant_storage` volume，RAG 資料�
 | [後端專案優化標準程序.md](後端專案優化標準程序.md) | 對單一服務做優化的標準作業程序（Phase 0–11），可複製套用到各微服務 |
 
 **首個示範案例**：`auth-service`（已完成一輪優化，見其 `openspec/`、`CLAUDE.md`、`mistake.md`）。
+
+**跨服務通訊架構優化**（2026-07-25，相關文件皆在根目錄）：
+
+| 文件 | 用途 |
+|------|------|
+| [微服務架構準則.md](微服務架構準則.md) | 服務間通訊、驗證、授權、資料隱私的高階原則 |
+| [微服務架構實作spec.md](微服務架構實作spec.md) | 對應準則的具體實作規格（路由表、header 契約、回應格式、非同步狀態管理） |
+| [mistakes.md](mistakes.md) | 現況與準則/spec的落差稽核結果（4 個並行審計、15 條落差） |
+| [待辦task.md](待辦task.md) | 依落差整理成的可執行任務清單（20 項，checklist 形式） |
+| [執行日誌.md](執行日誌.md) | 逐項任務的執行記錄（改了什麼檔案、驗收結果、是否偏離原計劃） |
+
+這一輪修正的核心是：服務間通訊統一經 Gateway（不再有服務直連）、內部呼叫用 `x-internal-request` header 取代各服務各自的授權 middleware、5 個服務的回應格式統一、chat-service 的非同步任務狀態從進程內記憶體改為資料庫持久化。詳見上方「核心架構原則」「非同步狀態管理」兩節與 [執行日誌.md](執行日誌.md)。

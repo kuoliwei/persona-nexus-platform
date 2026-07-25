@@ -29,11 +29,13 @@ context: |
   | persona-nexus-chat | 5176 | 聊天室 |
 
   ### 架構原則
-  - **唯一入口：** 前端一律打 api-gateway (8000)，不直接調用後端服務
-  - **JWT 驗證集中化：** Gateway 驗證 JWT，成功後注入 `x-user-id` / `x-user-email` header 轉發
-  - **後端無狀態：** 各服務直接信任 gateway 注入的 header，不再驗證 JWT
-  - **三層架構：** Controller（HTTP）→ Service（業務邏輯）→ Repository（資料存取）
-  - **錯誤碼語義化：** Service 層拋出語意錯誤（如 `EMAIL_ALREADY_EXISTS`），Controller 轉 HTTP 狀態碼
+  完整規則見 微服務架構準則.md（原則）與 微服務架構實作spec.md（具體規格），以下為摘要：
+  - **唯一入口：** 前端一律打 api-gateway (8000)，不直接調用後端服務；服務間通訊也一律經 Gateway（不直連）
+  - **兩種驗證機制：** 外部路由 `/api/*` 用 JWT（Gateway 驗證後注入 `x-user-id` / `x-user-email`）；內部路由 `/internal/*` 用來源 IP 驗證（`internalAuthMiddleware`），通過後注入 `x-internal-request: true`，下游服務讀到此 header 時跳過所有權/可見性檢查
+  - **後端無狀態：** 各服務直接信任 gateway 注入的 header，不再驗證 JWT；不設獨立的授權 middleware，授權判斷統一寫在 service 層
+  - **三層架構：** Controller（HTTP）→ Service（業務邏輯 + 授權判斷）→ Repository（資料存取）
+  - **錯誤碼語義化：** Service 層拋出語意錯誤（如 `EMAIL_ALREADY_EXISTS`），Controller 轉 HTTP 狀態碼，統一回應格式 `{error, message}` / 直接物件 / `{success, message}`
+  - **非同步狀態持久化：** 進程內記憶體（Map/dict）不得用來存非同步任務狀態，須存資料庫（chat-service 已完成，ai-service 待決策）
 
   ### 協作約定
   - 學習導向：優先解釋原理與設計思考，讓使用者自己動手寫程式
@@ -42,15 +44,15 @@ context: |
   - 環境變數：`.env` 和 `.env.example` 必須同步；跨服務調用的祕鑰（如 `JWT_SECRET`）必須一致
 
   ### 已知缺口（設計負債）
-  - persona-nexus-auth 登入成功後未存 localStorage token + 未導向大廳（前端流程受阻）
-  - persona-nexus-character 直打 character-service (5000) 而不經 gateway（繞過了 JWT 驗證）
-  - chat-service 與 ai-service 的連接尚未完成
+  - persona-nexus-auth 登入成功後未存 localStorage token + 未導向大廳（前端流程受阻，狀態未重新查證）
+  - persona-nexus-character 直打 character-service (5000) 而不經 gateway（繞過了 JWT 驗證，見該服務 CLAUDE.md）
+  - ai-service 的非同步任務狀態（`initialization_jobs`）仍在進程內記憶體，未持久化（需先決定是否為 ai-service 引入關聯式資料庫，見 執行日誌.md T19）
   - 多數服務無單元測試、無 lint 設定、無 CI/CD
 
   ### 命名慣例
   - 資料 ID：`usr_<timestamp>`（使用者）/ `char_<timestamp>`（角色）/ `conv_<cuid>`（對話）等
   - 環境變數：大寫 + 底線，如 `JWT_SECRET`、`USER_SERVICE_URL`、`OPENSPEC_TELEMETRY`
-  - 路由路徑：`/api/v1/<resource>` 為內部標準，gateway 可能 rewrite 對外路徑
+  - 路由路徑：對外 `/api/<resource>`、服務間 `/internal/<resource>`，下游服務內部標準為 `/api/v1/<resource>`，gateway 負責 pathRewrite
   - 錯誤碼：全大寫 + 底線，如 `EMAIL_ALREADY_EXISTS`、`CHARACTER_NOT_FOUND`
 
 # Per-artifact rules

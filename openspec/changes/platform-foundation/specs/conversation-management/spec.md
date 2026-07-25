@@ -1,5 +1,7 @@
 ## 新增需求
 
+> ⚠️ 2026-07-25 部分更新：本檔案原本描述的是簡化過的同步訊息模型，與 `chat-service` 現況（非同步 AI 生成、摘要機制、回溯式刪除、主角人設、`x-internal-request` 內部呼叫）落差已經很大，這次只補上跟《微服務架構準則.md》《微服務架構實作spec.md》直接相關的部分（回應格式、`x-internal-request`、非同步狀態持久化），**其餘章節（尤其「訊息不可變性」——現況已支援 `DELETE /conversations/:id/messages/:messageId` 回溯式刪除，跟本文件矛盾）仍是舊版描述，不可視為現況**。完整反映 chat-service 現況需要另外一輪全面重寫，不在這次範圍內。
+
 ### 需求：對話建立
 系統應允許使用者與 AI 角色開始新對話。每個對話屬於一個使用者，並與一個角色配對。
 
@@ -257,16 +259,59 @@
 }
 ```
 
+### 需求：內部服務呼叫繞過所有權檢查（2026-07-25 新增）
+ai-service 需要經 Gateway 的 `/internal/conversations` 路由查詢對話歷史、發送訊息，這類請求帶 `x-internal-request: true`，不帶 `x-user-id`（內部呼叫無具體登入者身份）。
+
+#### 情境：內部呼叫查詢訊息
+- **當** 請求帶 `x-internal-request: true` 查詢 `GET /conversations/:conversationId/messages`
+- **則** 系統跳過對話擁有權比對，直接回傳訊息
+
+#### 情境：內部呼叫發送訊息
+- **當** 請求帶 `x-internal-request: true` 呼叫 `POST /conversations/:conversationId/messages`
+- **則** 系統跳過擁有權比對
+
+#### 情境：外部請求仍需擁有權
+- **當** 請求不帶 `x-internal-request: true`
+- **則** 系統依 `x-user-id` 是否等於對話的 `userId` 判斷放行
+
+### 需求：非同步任務狀態持久化（2026-07-25 新增）
+建立聊天室的背景流程狀態、AI 生成狀態，原本存在進程內記憶體（Map），現已改為 `Conversation` 表本身的欄位與獨立的 `ConversationCreationJob` 表，服務重啟後狀態不遺失。
+
+#### 情境：聊天室建立中的狀態持久化
+- **當** 建立聊天室的背景流程（RAG 初始化）正在進行
+- **則** 狀態記錄在 `ConversationCreationJob` 表（複合主鍵 `userId + characterId`），而非進程內 Map
+- **並且** 服務重啟後，`GET /conversations/character/:characterId` 仍能正確回報 `preparing` 或讀到已完成的 `Conversation` 記錄
+
+#### 情境：AI 生成狀態持久化
+- **當** AI 正在生成回覆，或生成已完成/失敗
+- **則** 狀態記錄在 `Conversation` 表的 `generationStatus`、`generationError`、`generationTempUserId`、`generationUserMessageId`、`generationAssistantMessageId`、`generationUpdatedAt` 欄位
+- **並且** 服務重啟後，`GET /conversations/:conversationId/ai-generation-status` 仍能讀到重啟前的狀態
+
+#### 情境：並行生成鎖改為資料庫層級的條件更新
+- **當** 同一聊天室已有生成任務進行中（`generationStatus === 'generating'` 且未超過殭屍鎖時限）
+- **則** 新的發送訊息請求被拒絕（`AI_GENERATION_IN_PROGRESS`，HTTP 409）
+- **並且** 這個「拒絕並行」的判斷透過資料庫的條件式 `updateMany`（`WHERE` 涵蓋「非 generating」「從未生成過」「殭屍鎖已過期」三種情況）達成原子性，取代原本依賴進程內記憶體同步區塊的作法
+
+## 回應格式（2026-07-25 更新）
+
+錯誤回應統一為 `{ error: "<CODE>", message: "..." }`（非本文件其餘章節仍寫的 `{status:"error", message}` 舊格式）。成功回應：
+- 單一資源／訊息：直接回傳物件本身
+- 資源清單：直接回傳陣列
+- 操作成功、無實質資源（例如刪除對話、清除生成狀態）：`{ success: true, message: "..." }`
+- **業務語意欄位不受此格式規則約束**：例如 `getOrCreateConversation` 回傳的 `status: "preparing"/"ready"/"failed"`、AI 生成狀態的 `status: "generating"/"completed"/"failed"/"unknown"`，這些 `status` 是給前端輪詢判斷用的業務語意值，不是「操作成功/失敗」的格式包裹，維持原樣不受影響。
+
 ## 錯誤碼參考
 
 | 錯誤碼 | HTTP 狀態碼 | 含義 |
 |---|---|---|
 | CONVERSATION_NOT_FOUND | 404 | 對話 ID 不存在 |
 | CHARACTER_NOT_FOUND | 404 | 參照的角色 ID 不存在 |
-| MISSING_REQUIRED_FIELDS | 400 | 缺少必填欄位（對話的 characterId，訊息的 role/text） |
+| MISSING_CONVERSATION_ID / MISSING_CHARACTER_ID / MISSING_TEXT / MISSING_PARAMS | 400 | 缺少必填欄位 |
 | INVALID_ROLE | 400 | 角色必須是「user」或「assistant」 |
-| FORBIDDEN | 403 | 使用者沒有權限（不擁有對話） |
-| UNKNOWN_SERVER_ERROR | 500 | 非預期的伺服器錯誤 |
+| FORBIDDEN | 403 | 使用者沒有權限（不擁有對話，且非內部呼叫） |
+| UNAUTHORIZED | 401 | 缺少 `x-user-id`，且非內部呼叫 |
+| AI_GENERATION_IN_PROGRESS | 409 | 同一聊天室已有生成任務進行中 |
+| INTERNAL_SERVER_ERROR | 500 | 非預期的伺服器錯誤 |
 
 ## 架構說明
 
