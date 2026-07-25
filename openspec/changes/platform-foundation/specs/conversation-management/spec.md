@@ -152,7 +152,7 @@
 **回應 400 (MISSING_REQUIRED_FIELDS)：**
 ```json
 {
-  "status": "error",
+  "error": "MISSING_REQUIRED_FIELDS",
   "message": "缺少必填欄位：characterId"
 }
 ```
@@ -209,7 +209,7 @@
 **回應 400 (INVALID_ROLE)：**
 ```json
 {
-  "status": "error",
+  "error": "INVALID_ROLE",
   "message": "無效的角色。必須是 'user' 或 'assistant'"
 }
 ```
@@ -246,7 +246,7 @@
 **回應 404 (CONVERSATION_NOT_FOUND)：**
 ```json
 {
-  "status": "error",
+  "error": "CONVERSATION_NOT_FOUND",
   "message": "找不到對話"
 }
 ```
@@ -254,7 +254,7 @@
 **回應 403 (FORBIDDEN)：**
 ```json
 {
-  "status": "error",
+  "error": "FORBIDDEN",
   "message": "你沒有權限存取此對話"
 }
 ```
@@ -294,7 +294,7 @@ ai-service 需要經 Gateway 的 `/internal/conversations` 路由查詢對話歷
 
 ## 回應格式（2026-07-25 更新）
 
-錯誤回應統一為 `{ error: "<CODE>", message: "..." }`（非本文件其餘章節仍寫的 `{status:"error", message}` 舊格式）。成功回應：
+錯誤回應統一為 `{ error: "<CODE>", message: "..." }`（本文件其餘章節的 JSON 範例已於 2026-07-26 同步更新為此格式）。成功回應：
 - 單一資源／訊息：直接回傳物件本身
 - 資源清單：直接回傳陣列
 - 操作成功、無實質資源（例如刪除對話、清除生成狀態）：`{ success: true, message: "..." }`

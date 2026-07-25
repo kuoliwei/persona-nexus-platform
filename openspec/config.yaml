@@ -44,10 +44,11 @@ context: |
   - 環境變數：`.env` 和 `.env.example` 必須同步；跨服務調用的祕鑰（如 `JWT_SECRET`）必須一致
 
   ### 已知缺口（設計負債）
-  - persona-nexus-auth 登入成功後未存 localStorage token + 未導向大廳（前端流程受阻，狀態未重新查證）
-  - persona-nexus-character 直打 character-service (5000) 而不經 gateway（繞過了 JWT 驗證，見該服務 CLAUDE.md）
-  - ai-service 的非同步任務狀態（`initialization_jobs`）仍在進程內記憶體，未持久化（需先決定是否為 ai-service 引入關聯式資料庫，見 執行日誌.md T19）
-  - 多數服務無單元測試、無 lint 設定、無 CI/CD
+  - ~~persona-nexus-auth 登入成功後未存 localStorage token + 未導向大廳~~ — **2026-07-26 查證：已修復**。登入成功後 `persona-nexus-auth/src/main.js` 會 `window.location.href` 帶 `?token=` 導向 lobby；lobby 的 `src/main.js` 讀取 URL 上的 `token` 後 `localStorage.setItem('token', ...)`。此為 same-origin-deployment 專案（3.1.4、3.3.4）的成果，非本專案獨立修復
+  - ~~persona-nexus-character 直打 character-service (5000) 而不經 gateway~~ — **2026-07-26 查證：已修復**。`persona-nexus-character/src/api.js` 的 `BASE_URL` 已改為相對路徑 `/api`（同源部署，經 gateway），舊的直連 `http://localhost:5000` 版本（`api.dev.js`）仍留在專案中但未被 `create.js`／`edit.js` 引用，僅供本機開發除錯用。此為 same-origin-deployment 專案（3.2.1-3.2.2）的成果
+  - chat-service ↔ ai-service 即時對話生成與摘要整合**已完成並於 2026-07-26 完整測試驗證**（進階整合測試案例 17-23），非本文件先前寫的「未完成」；仍是輪詢而非 WebSocket，但這是既有設計決策（design.md 決策 7），不是未完成
+  - ai-service 的非同步任務狀態（`initialization_jobs`）仍在進程內記憶體，未持久化（需先決定是否為 ai-service 引入關聯式資料庫，見 執行日誌.md T19，2026-07-25 起擱置中）
+  - 多數服務無單元測試、無 lint 設定、無 CI/CD（狀態未重新查證）
 
   ### 命名慣例
   - 資料 ID：`usr_<timestamp>`（使用者）/ `char_<timestamp>`（角色）/ `conv_<cuid>`（對話）等

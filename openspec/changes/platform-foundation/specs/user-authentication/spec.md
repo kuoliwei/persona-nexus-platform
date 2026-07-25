@@ -1,5 +1,7 @@
 ## 新增需求
 
+> 2026-07-25 更新：本檔案已依《微服務架構準則.md》《微服務架構實作spec.md》與《執行日誌.md》記錄的 T12、T22 修正結果同步。主要變化：成功／錯誤回應格式改為 `{error, message}` / 直接物件（不再是 `{status, message, data}` 包裹）；`EMAIL_ALREADY_EXISTS` 的 HTTP 狀態碼從 400 修正為 409（對齊 spec 第三部分「HTTP Status Code 統一定義」與 user-service 同名錯誤碼）。2026-07-26 進階整合測試案例 1、G3、J1 已對格式與狀態碼做過正式驗證。
+
 ### 需求：使用者註冊
 系統應允許新使用者使用電子郵件和密碼進行註冊。密碼必須使用 bcrypt（saltRounds=10）進行雜湊後再儲存。系統不應儲存明文密碼。
 
@@ -9,7 +11,7 @@
 
 #### 情境：重複電子郵件被拒絕
 - **當** 使用者提交註冊請求，使用已存在的電子郵件
-- **則** 系統回傳錯誤碼 `EMAIL_ALREADY_EXISTS`，HTTP 400
+- **則** 系統回傳錯誤碼 `EMAIL_ALREADY_EXISTS`，HTTP 409（2026-07-25 由 T22 修正，此前誤回 400，已於 2026-07-26 案例 J1 實測驗證為 409）
 
 #### 情境：無效的電子郵件格式
 - **當** 使用者提交註冊請求，格式不正確的電子郵件
@@ -61,11 +63,11 @@
 
 #### 情境：錯誤回應格式
 - **當** 發生錯誤（例如 `EMAIL_ALREADY_EXISTS`）
-- **則** 系統回傳 `{ status: "error", message: "..." }`，包含適當的 HTTP 狀態碼
+- **則** 系統回傳 `{ error: "<CODE>", message: "..." }`，包含適當的 HTTP 狀態碼（2026-07-25 由 T12 從舊格式 `{status:"error", message}` 修正）
 
 | 錯誤碼 | HTTP 狀態碼 | 含義 |
 |---|---|---|
-| EMAIL_ALREADY_EXISTS | 400 | 電子郵件已被註冊 |
+| EMAIL_ALREADY_EXISTS | 409 | 電子郵件已被註冊 |
 | INVALID_EMAIL | 400 | 電子郵件格式無效 |
 | MISSING_REQUIRED_FIELDS | 400 | 缺少必填欄位（電子郵件或密碼） |
 | UNKNOWN_USER | 400 | 系統中找不到電子郵件 |
@@ -97,22 +99,18 @@
 }
 ```
 
-**回應 201：**
+**回應 201：** 直接回傳物件本身（無外層包裹，2026-07-25 由 T12 修正，此前是 `{status,message,data}` 包裹）
 ```json
 {
-  "status": "success",
-  "message": "註冊成功！",
-  "data": {
-    "id": "usr_1720000000000",
-    "email": "user@example.com"
-  }
+  "id": "usr_1720000000000",
+  "email": "user@example.com"
 }
 ```
 
-**回應 400 (EMAIL_ALREADY_EXISTS)：**
+**回應 409 (EMAIL_ALREADY_EXISTS)：**
 ```json
 {
-  "status": "error",
+  "error": "EMAIL_ALREADY_EXISTS",
   "message": "該電子郵件已被註冊，請更換帳號。"
 }
 ```
@@ -126,23 +124,19 @@
 }
 ```
 
-**回應 200：**
+**回應 200：** 直接回傳物件本身（無外層包裹，2026-07-25 由 T12 修正）
 ```json
 {
-  "status": "success",
-  "message": "登入成功！",
-  "data": {
-    "id": "usr_1720000000000",
-    "email": "user@example.com",
-    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-  }
+  "id": "usr_1720000000000",
+  "email": "user@example.com",
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
 }
 ```
 
 **回應 400 (UNKNOWN_USER 或 EMAIL_OR_PASSWORD_NOTMATCH)：**
 ```json
 {
-  "status": "error",
+  "error": "UNKNOWN_USER",
   "message": "電子郵件或密碼錯誤。請再試一次。"
 }
 ```
@@ -150,7 +144,7 @@
 ## 環境變數
 
 - `JWT_SECRET` — JWT 簽署的祕密鑰匙（必須與 api-gateway 的 `JWT_SECRET` 相同）
-- `USER_SERVICE_URL` — user-service 的 URL，用於使用者儲存（預設：`http://localhost:4000`）
+- `GATEWAY_URL` — api-gateway 的 URL，用於透過 `/internal/users` 進行使用者儲存（預設：`http://localhost:8000`；2026-07-25 由 T6 取代舊的 `USER_SERVICE_URL` 直連設定，不再直連 user-service:4000）
 - `PORT` — Auth-service 監聽的連接埠（預設：3000）
 
 ## 依賴

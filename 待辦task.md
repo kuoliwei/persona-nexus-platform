@@ -142,6 +142,44 @@
 
 ---
 
+## 批次 7：T1-T20 執行後新發現的落差（2026-07-25，回填測試清單驗證方式時發現，尚未執行）
+
+> 對應 `mistakes.md` 新增的 M16、M17，是後續另一輪對話依規範文件核對 `測試清單-進階整合測試.md` 每個案例時發現的，不在原始 15 條落差內。
+
+- [x] **T21. 修復 chat-service 呼叫 character-service 時繞過私有角色所有權檢查的漏洞**
+  - **對應**：M16
+  - **背景**：已查證 `/internal/characters/:id` 目前**沒有任何 ai-service 呼叫**——ai-service 需要的角色資訊是 chat-service 建立對話時就存成快照（`Conversation` 表的 `characterName`/`characterGender`/`characterTags` 等欄位）、直接夾帶在 `POST /internal/chat/generate` 請求裡送過去的，ai-service 不需要另外查角色。這條內部路由目前唯一的實際呼叫者就是 `chat-service/src/lib/serviceClient.js` 的 `getCharacter()`，但 spec 的內部路由表只授權給 ai-service 用（詳見 `mistakes.md` M16）。
+  - **原本考慮過的方案（有實作障礙，不採用）**：讓 chat-service 改打 `/api/characters/:id` 外部路由。**問題**：`/api/*` 路由需要 `Authorization: Bearer <token>` 讓 Gateway 的 `authMiddleware` 驗證，但 chat-service 手上只有 Gateway 當初從 JWT 解出的 `x-user-id` 字串，**沒有原始的 JWT token**，無法組出合法的 `Authorization` header 去打外部路由。若要硬做，得把原始請求的 token 一路從 controller 傳到 service 層再傳到 serviceClient，這違反《微服務架構準則》第 4、5 項（下游服務間不該互相傳遞 token）。
+  - **採用方案**：改在 **character-service** 這一端修正判斷邏輯，區分「真正的系統層級內部呼叫」（沒有帶任何使用者身份，例如未來 ai-service 若直接查角色）跟「內部呼叫但代表特定使用者」（chat-service 現在的用法：帶了 `x-user-id` 但走 `/internal/*`）：
+    - `character-service/src/services/characterService.js` 的 `getCharacter` 方法，把判斷式從：
+      ```js
+      if (!isInternalRequest && existing.visibility === 'private' && existing.authorId !== requesterId) {
+        throw new Error('FORBIDDEN');
+      }
+      ```
+      改成：
+      ```js
+      const isTrueSystemCall = isInternalRequest && !requesterId;
+      if (!isTrueSystemCall && existing.visibility === 'private' && existing.authorId !== requesterId) {
+        throw new Error('FORBIDDEN');
+      }
+      ```
+    - 邏輯：`isInternalRequest === true` 且**沒有帶 `requesterId`**（沒有具體使用者身份）→ 視為真正的系統操作，跳過檢查（未來 ai-service 若要用，符合這個模式）。`isInternalRequest === true` 但**有帶 `requesterId`**（chat-service 現在的用法，會帶 `x-user-id`）→ 不再無條件放行，走正常的所有權/可見性比對
+    - 只需要改這一個方法；`updateCharacter`／`deleteCharacter` 目前沒有被 chat-service 這樣呼叫，不在本次修復範圍，但若之後發現同樣模式，可比照處理
+  - **驗收**：
+    - X 嘗試跟 Y 的 private 角色開始對話應回 403（對應 `測試清單-進階整合測試.md` 案例 13/15/16）
+    - 自己角色（含 private）與他人 public 角色的聊天不受影響（案例 7-12、14 應維持通過，因為這些情境下 `existing.authorId === requesterId` 或 `visibility === 'public'`，不會進到 FORBIDDEN 分支）
+    - H1（`GET /internal/characters/<X-priv id>` 不帶任何 header，模擬未來 ai-service 的純系統呼叫）應維持 `200`——因為這個測法完全不帶 `x-user-id`，`requesterId` 是 `undefined`，符合 `isTrueSystemCall` 條件，行為不受影響
+  - **注意**：這個修法不用動 `chat-service` 的任何檔案，只改 `character-service` 一處判斷式；也不用動 Gateway 或 `internalAuthMiddleware`
+
+- [x] **T22. 修正 auth-service 的 `EMAIL_ALREADY_EXISTS` 狀態碼**
+  - **對應**：M17
+  - **內容**：`auth-service/src/controllers/authController.js` 的 `ERROR_MAP` 裡 `EMAIL_ALREADY_EXISTS` 的 `status` 從 `400` 改成 `409`（訊息文字不變），對齊 spec 第三部分 HTTP Status Code 表（明文用「email 已被註冊」當 409 範例）與 `user-service` 已經正確的同名錯誤碼
+  - **驗收**：`POST /api/auth/register` 用已存在 email 應回 `409`（對應 `測試清單-進階整合測試.md` 第六節案例 J1）
+  - **注意**：確認前端 `persona-nexus-auth` 沒有依賴這個狀態碼是 `400` 的判斷邏輯（例如 `if (status === 400)` 這類寫法），若有需要一併同步修正
+
+---
+
 ## 批次 6：待確認事項（不確定是否算落差）
 
 - [x] **T20. 確認 `GET /api/characters` 的查詢方式是否為預期設計**

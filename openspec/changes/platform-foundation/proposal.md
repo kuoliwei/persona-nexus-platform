@@ -56,7 +56,7 @@ Persona Nexus 是一個學習性質的 AI 角色扮演/戀愛模擬平台，目�
 - `/api/v1/conversations/*` — 對話路由
 - User、Character、Conversation、Message 資料模型
 
-**已知缺口（待補）：**
-- persona-nexus-auth 登入成功後未存 localStorage token
-- persona-nexus-character 直打 character-service 而不經 gateway
-- chat-service ↔ ai-service 實時連接未完成
+**已知缺口（待補，2026-07-26 更新）：**
+- ~~persona-nexus-auth 登入成功後未存 localStorage token~~、~~persona-nexus-character 直打 character-service 而不經 gateway~~、~~chat-service ↔ ai-service 實時連接未完成~~ 三項已於 same-origin-deployment 專案與後續整合測試中修復並驗證，詳見 `openspec/config.yaml` 已知缺口段落
+- ai-service 的非同步任務狀態（`initialization_jobs`）仍在進程內記憶體，未持久化（擱置中，見 `執行日誌.md` T19）
+- 多數服務無單元測試、無 lint 設定、無 CI/CD

@@ -115,8 +115,9 @@ Caddyfile 拆成兩份：`Caddyfile`（主機模式，proxy 到 dev server）與
 - 修正：`/api/users/*` 因缺少 pathRewrite 一律 404（既有缺陷，早於本次改造）
 - 7.4 說明：跨前端目標路徑均已驗證可正確解析到對應應用；實際瀏覽器點擊流程未以 curl 覆蓋
 
-**發現的安全問題（不在本次範圍，需另案處理）**：
-- `GET /api/users/:id` 回傳完整使用者物件，**包含 bcrypt 密碼雜湊**。此端點先前因 404 而未被觸及，修好路由後這個外洩才變成實際可達。應在 user-service 的 controller 過濾掉 password 欄位。
+**發現的安全問題（原列為不在本次範圍、需另案處理，✅ 已於 2026-07-25 修復並於 2026-07-26 正式測試驗證）**：
+- ~~`GET /api/users/:id` 回傳完整使用者物件，**包含 bcrypt 密碼雜湊**。此端點先前因 404 而未被觸及，修好路由後這個外洩才變成實際可達。應在 user-service 的 controller 過濾掉 password 欄位。~~
+- 修復記錄：`user-service/src/controllers/userController.js` 的 `toPublicUser()` 已在回傳前濾掉 `password` 欄位（`微服務架構實作spec.md` 落差稽核 `mistakes.md` 未把這個欄位過濾列為獨立問題，是因為 pathRewrite 沒修好前這條路由本來就 404 打不到，過濾邏輯其實已存在，只是不可達）。2026-07-26 進階整合測試案例 G1（`GET /api/users/:id` 帶合法 token）實測回傳 `200`，body 僅含 `{id, email}`，不含 `password`，確認外洩已排除。
 
 **仍未完成（docker 模式的最後阻礙）**：
 - [ ] 各後端專案（api-gateway、auth/user/character/chat/ai-service）尚無 `Dockerfile`，`docker-compose up --build` 會失敗

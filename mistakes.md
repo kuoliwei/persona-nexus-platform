@@ -113,6 +113,26 @@
 
 ---
 
+## 高：T1-T20 修復後新出現的落差（2026-07-25，回填測試清單驗證方式時發現）
+
+> 以下兩筆不是原始 4 個並行稽核找到的，是後續另一輪對話依「微服務架構準則.md」「微服務架構實作spec.md」重新核對 `測試清單-進階整合測試.md` 每個案例時發現的，屬於 T1-T20 執行後的**新落差**（M16）或**原稽核覆蓋不到的漏網**（M17）。詳細判決見 `測試清單-進階整合測試.md`，這裡只記錄根因追溯結果。
+
+### M16. chat-service 呼叫 `/internal/characters/:id` 時，被 T8 新增的繞過邏輯意外波及，導致私有角色所有權檢查失效
+- **檔案**：`chat-service/src/lib/serviceClient.js:18-29`（`getCharacter`，本輪從未被任何 T 任務修改）、`character-service/src/services/characterService.js:93`（T8 新增的 `isInternalRequest` 判斷）
+- **問題**：T8 的驗收標準（`待辦task.md`）只鎖定 **ai-service** 作為 `/internal/characters/:id` 的呼叫者（與 spec 內部路由表一致），驗收結果也只驗證「ai-service 內部呼叫不會被誤擋」，沒有評估這個新加上去的繞過邏輯會不會被其他既有呼叫者觸發。而 `chat-service` 早就存在一個呼叫同一條路由的 `serviceClient.getCharacter()`（用於 `getOrCreateConversation` 驗證角色存在性），T8 之前因為繞過邏輯不存在，這個呼叫的所有權檢查是正常生效的；T8 之後，同一個呼叫因為 Gateway（T2）無條件依 IP 注入 `x-internal-request: true`，所有權檢查被整段跳過——任何登入使用者都能透過 chat-service 開啟與他人私有角色的對話。
+- **違反條款**：《微服務架構準則》原則 7（資源所有權檢查）、原則 8（私有角色不能被其他使用者得知，內部呼叫例外僅限「系統本身操作」）；spec 第一部分內部路由表（`/internal/characters/:id` 呼叫來源只列 ai-service）
+- **性質**：T8 本身的程式碼邏輯對 ai-service 是正確的，問題出在驗收時沒有檢查新增能力的影響範圍（blast radius），波及了不在任務範圍內的既有呼叫者。對應測試案例：`測試清單-進階整合測試.md` 案例 13/15/16。
+- **建議修復**：已查證 `/api/characters/:id` 外部路由方案不可行——chat-service 手上只有 `x-user-id` 字串，沒有原始 JWT，無法組出合法 `Authorization` header，硬做需要跨服務傳遞 token，違反準則第 4、5 項。改採：在 `character-service/src/services/characterService.js` 的 `getCharacter` 判斷式裡區分「真正系統層級呼叫」（`isInternalRequest && !requesterId`，跳過檢查）與「內部呼叫但代表特定使用者」（`isInternalRequest && requesterId` 存在，走正常所有權比對）。詳細程式碼與驗收標準見 `待辦task.md` T21。
+
+### M17. auth-service 的 `EMAIL_ALREADY_EXISTS` 狀態碼未依 spec 對齊，T12（回應格式對齊）只改了一半
+- **檔案**：`auth-service/src/controllers/authController.js:5`（`ERROR_MAP` 的 `EMAIL_ALREADY_EXISTS: {status: 400, ...}`）
+- **問題**：spec.md 第三部分「HTTP Status Code 統一定義」明文用「email 已被註冊」當作 `409` 的唯一具體範例。T12 執行時把「回應格式對齊」理解成只需要修正 body 鍵名（`{status,message}` → `{error,message}`），從頭到尾沒有檢查狀態碼是否也符合 spec 的狀態碼表，`EMAIL_ALREADY_EXISTS` 的 `status` 從改動前到改動後都維持 `400`。對照 `user-service`（T13）同名錯誤碼正確回 `409`，代表這不是 spec 模糊，是 T12 漏查了一半。
+- **違反條款**：spec 第三部分「HTTP Status Code 統一定義」
+- **性質**：M11 原始稽核（本文件）對 auth-service 的問題描述本身也只聚焦「鍵名錯誤且缺錯誤碼」，沒有觸及狀態碼，代表這個落差從最初的稽核階段就沒被抓出來，一路帶進 T12 實作跟後續測試清單。對應測試案例：`測試清單-進階整合測試.md` 第六節 J1。
+- **建議修復**：把 `EMAIL_ALREADY_EXISTS` 的 `status` 從 `400` 改成 `409`，訊息文字不變。
+
+---
+
 ## 低：表述與實作落差（需確認是否為預期設計）
 
 ### M15. `GET /api/characters` 沒有「單一查詢同時涵蓋自己的角色+他人 public 角色」的路徑
