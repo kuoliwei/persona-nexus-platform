@@ -45,3 +45,10 @@ Thumbs.db
 
 # Claude Code
 .claude/
+
+# 機器專屬的啟動腳本設定（conda 路徑覆寫、ngrok 路徑等），每台機器自己建立，
+# 不進版控。範例見 start-config.local.bat.example。
+start-config.local.bat
+
+# 過程性除錯日誌：內容含本機路徑等機器專屬細節，不進版控。
+部署除錯測試.md

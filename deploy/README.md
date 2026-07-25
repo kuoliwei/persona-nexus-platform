@@ -19,6 +19,26 @@ auth-service `3001`, user-service `3002`, character-service `3003`,
 chat-service `3004`, ai-service `3005`. The gateway's `/internal/*` routes are
 for service-to-service calls only and are not routed by Caddy.
 
+## Every frontend's `vite.config.js` must set three things (dev mode)
+
+The four frontends are independent git repos with no shared config, so this list
+has drifted before (2026-07-24: two of the four were missing these and the whole
+same-origin setup broke). Whenever you touch a frontend's `vite.config.js`, or add
+a fifth frontend, run `powershell -File check-vite-configs.ps1` from the repo root
+to verify:
+
+1. **`base`** must match the "Vite `base`" column above. `Caddyfile` (dev mode)
+   forwards `/login*`, `/character*`, `/chat*` to the dev server **without**
+   stripping the prefix, so the dev server itself must know its own base path.
+   Get this wrong and the page's JS/CSS load as absolute `/src/...` paths, which
+   don't match any Caddy route and silently fall through to the lobby's catch-all
+   — the page loads, but with the wrong frontend's assets.
+2. **`server.host: true`** — Caddy runs in a Docker container and reaches the dev
+   server via `host.docker.internal`. If the dev server only binds `localhost`,
+   the container can't connect and every route through it 502s.
+3. **`server.allowedHosts: true`** — Caddy forwards the `Host` header unchanged
+   (`localhost:8080`), which Vite's dev server rejects by default unless allowed.
+
 ## Two Caddyfiles
 
 The upstream addresses differ per mode, so there are two configs:

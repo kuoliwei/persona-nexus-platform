@@ -3,10 +3,40 @@ setlocal enabledelayedexpansion
 
 set PROJECT_ROOT=%~dp0
 
-REM ai-service is Python and needs its conda env activated first.
-REM conda is not on PATH, so call activate.bat by full path.
-set CONDA_ACTIVATE=C:\Users\MSI3090\miniconda3\Scripts\activate.bat
-set CONDA_ENV=ai-service
+REM Machine-specific overrides (CONDA_ACTIVATE, NGROK_PATH) live in this
+REM gitignored file - see start-config.local.bat.example. Skipped if absent.
+if exist "%PROJECT_ROOT%start-config.local.bat" call "%PROJECT_ROOT%start-config.local.bat"
+
+REM ai-service is Python and runs inside the "ai-service" conda env. We call
+REM that env's python.exe directly by full path instead of `call activate.bat`
+REM + `python` - conda's activate.bat/conda.bat batch files can recurse into
+REM "BATCH RECURSION exceeds STACK limits" when invoked from inside another
+REM script's nested `start cmd /k ... && call ... && ...` chain (a known
+REM conda-on-Windows batch quirk), and activation isn't actually needed just
+REM to run one script - it only matters for resolving `python`/`pip` on PATH.
+REM Set AI_PYTHON_EXE in start-config.local.bat if auto-detection below fails.
+if not defined AI_PYTHON_EXE (
+    set "AI_ENV_PATH="
+    for /f "tokens=1,*" %%a in ('conda env list ^| findstr /b /c:"ai-service "') do set "AI_ENV_PATH=%%b"
+    if defined AI_ENV_PATH (
+        set "AI_PYTHON_EXE=!AI_ENV_PATH!\python.exe"
+    )
+)
+
+if not defined AI_PYTHON_EXE (
+    echo [ERROR] Could not find the "ai-service" conda env. Make sure it
+    echo         exists - run: conda create -n ai-service python=3.11 - or set
+    echo         AI_PYTHON_EXE manually in start-config.local.bat.
+    pause
+    exit /b 1
+)
+
+if not exist "!AI_PYTHON_EXE!" (
+    echo [ERROR] Auto-detected AI_PYTHON_EXE does not exist: !AI_PYTHON_EXE!
+    echo         Set the correct path manually in start-config.local.bat.
+    pause
+    exit /b 1
+)
 
 echo Starting all services...
 echo.
@@ -54,7 +84,12 @@ start "chat-service" cmd /k "cd /d %PROJECT_ROOT%chat-service && npm run dev"
 timeout /t 2 /nobreak
 
 echo Starting ai-service (Port 6001)...
-start "ai-service" cmd /k "cd /d %PROJECT_ROOT%ai-service && set PYTHONIOENCODING=utf-8 && call %CONDA_ACTIVATE% %CONDA_ENV% && python main.py"
+REM AI_PYTHON_EXE's path can contain spaces (e.g. a Windows username with a
+REM space in it), so the working directory is set via `start`'s own /d switch
+REM instead of a `cd /d ... &&` prefix inside the quoted cmd /k string - nesting
+REM a second quoted (space-containing) path inside that outer quoted string
+REM breaks cmd.exe's parser ("... was unexpected at this time").
+start "ai-service" /d "%PROJECT_ROOT%ai-service" cmd /k "set PYTHONIOENCODING=utf-8 && "%AI_PYTHON_EXE%" main.py"
 timeout /t 2 /nobreak
 
 echo Starting api-gateway (Port 8000)...
@@ -130,14 +165,22 @@ echo ===========================================================================
 echo.
 set /p START_NGROK="Do you want to expose the app to the public internet with ngrok? (y/n): "
 if /i "%START_NGROK%"=="y" (
-    echo.
-    echo Starting ngrok...
-    echo   NOTE: Always forward port 8080 (Caddy), not other ports!
-    echo.
-    start "ngrok" cmd /k "cd /d C:\Users\MSI3090\ngrok && .\ngrok.exe http 8080"
-    echo   ngrok will open in a new window. Check it for your public URL.
-    echo   (URL changes every 2 hours on free plan)
-    echo.
+    if defined NGROK_PATH (
+        echo.
+        echo Starting ngrok...
+        echo   NOTE: Always forward port 8080 - the Caddy port - not other ports!
+        echo.
+        start "ngrok" cmd /k "cd /d !NGROK_PATH! && .\ngrok.exe http 8080"
+        echo   ngrok will open in a new window. Check it for your public URL.
+        echo   URL changes every 2 hours on free plan
+        echo.
+    ) else (
+        echo.
+        echo   [SKIPPED] NGROK_PATH is not set. Copy start-config.local.bat.example
+        echo   to start-config.local.bat and set NGROK_PATH to the folder containing
+        echo   ngrok.exe, then re-run this script.
+        echo.
+    )
 )
 echo.
 pause

@@ -1,0 +1,17 @@
+@echo off
+REM Machine-specific overrides. Copy this file to start-config.local.bat
+REM (same folder), then fill in whatever this machine needs. That file is
+REM gitignored - each machine creates its own, nothing here travels with git.
+REM
+REM start-backend-services.bat / start-all-services.bat load
+REM start-config.local.bat automatically at startup if it exists; if it
+REM doesn't exist, they just skip this step silently.
+
+REM Only needed if the "ai-service" conda env can't be auto-detected
+REM (looks for a line starting "ai-service " in `conda env list`).
+REM Point this at python.exe inside that env, e.g.:
+REM set AI_PYTHON_EXE=C:\Users\yourname\.conda\envs\ai-service\python.exe
+
+REM Folder containing ngrok.exe (no trailing filename). If unset, answering
+REM "y" to the ngrok prompt just skips it with a message instead of failing.
+REM set NGROK_PATH=C:\Users\yourname\ngrok
