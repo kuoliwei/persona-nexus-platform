@@ -1,0 +1,1244 @@
+# 前端網頁 Debug Task Checklist
+
+> 這份文件彙整《前端網頁手動測試task.md》目前為止（測到第五階段中途暫停）實測過程中發現的
+> **真實 bug**，供之後集中排查/修復用。原始測試記錄（含通過的項目、完整現象描述、根因分析）
+> 都保留在《前端網頁手動測試task.md》文末「發現的新問題」。
+>
+> 2026-07-26 起，本文件已從「待辦摘要」擴充為**調查報告 + 修復記錄**，是這輪 debug 工作的
+> 主文件。
+>
+> **修復時的共同提醒**：
+> - 每項都先讀對應的原始碼確認現狀仍與下方描述一致（程式碼可能在這之間又變了）。
+> - 修完之後要回頭在《前端網頁手動測試task.md》對應的測試項目重新實測一次，不是修完就結案。
+> - 不要順便夾帶其他重構或優化，只修這裡列出的問題本身。
+
+---
+
+# 🔄 交接說明（2026-07-26，給接手的新聊天室）
+
+> **先讀這一段，再往下看。** 前一個聊天室對話量到上限，以下是接手需要知道的全部狀態。
+
+## 一句話現況
+
+四個 bug 已完成完整調查（每項都有可覆核的證據），**Bug 1／2／3 已修完並通過靜態驗證，
+Bug 4 尚未動手、卡在一個等使用者拍板的設計選擇**。所有修復**都還沒有經過真人瀏覽器實測**，
+使用者的指示是「全部修完再一起測試」。
+
+## 進度總表
+
+| Bug | 服務 | 狀態 | 已完成的驗證 | 還缺什麼 |
+|---|---|---|---|---|
+| **1** 跳轉雙斜線 | character | ✅ 已修 | URL 解析 5/5、語法檢查、grep 無殘留 | 真人實測（建立／更新／刪除三條） |
+| **2** tooltip 殘留 | lobby | ✅ 已修 | 事件流程 8/8、`npm run build`、`openspec validate` | 真人實測（點卡片／瀏覽器上一頁兩條） |
+| **3** 空陣列崩潰 | chat | ✅ 已修 | 4 條路徑 4/4、原重現腳本已失效、build 13 modules | 真人實測（需製造聊天室逾時情境） |
+| **4** Qdrant | ai-service + bat | ✅ 已修 | A/B/C/D 全做；實機驗證 11/11 + 10/10（含完整恢復情境） | 真人實測（走真實 uvicorn + 瀏覽器聊天） |
+
+**已改動但尚未 commit 的檔案**（四個前端與 ai-service 各自是獨立的巢狀 git repo）：
+- `persona-nexus-character/src/create.js`、`src/edit.js`
+- `persona-nexus-chat/src/virtualMessageList.js`
+- `persona-nexus-lobby/src/character-tooltip.js`、`openspec/specs/lobby-ui/spec.md`
+- `ai-service/app.py`、`src/rag/vector_store.py`、`src/repositories/rag_repository.py`、
+  `src/services/rag_service.py`、`openspec/specs/ai-generation/spec.md`、`CLAUDE.md`
+- 專案根目錄的 `start-all-services.bat`、`start-backend-services.bat` 與本文件
+
+> ⚠️ 這幾個 repo 的工作區裡還有**上一輪前端優化（Phase 0–10）尚未 commit 的大量改動**
+> （character 13 檔、chat 14 檔、lobby 19 檔），本輪 debug 只動了上面列的那幾個。
+> 要 commit 時務必只挑本輪的檔案，不要整包 `git add .`。
+
+## ✅ Bug 4 的兩個待決問題已拍板（2026-07-26）
+
+**問題 1：A/B/C/D 怎麼走？** → 使用者選擇**四項全做**，startup 行為採 **D（維持不 crash）**。
+（原文件寫的「待辦 3：不要吞掉 startup 失敗」方向是錯的，照做會違反 12-Factor IX
+Disposability，讓 Qdrant 慢幾秒 ai-service 就整個起不來。）
+
+| | 做什麼 | 解決什麼 | 狀態 |
+|---|---|---|---|
+| **C** | 啟動腳本拿掉 `--rm`（`start-all-services.bat` **與** `start-backend-services.bat` 兩支） | 證據 8 證明這正是「以前不會、現在會」的直接原因，等於回復到出問題前的狀態 | ✅ |
+| **A** | collection 建立改成可在執行期補做的冪等 `ensure` | 讓「只重啟 Qdrant、不重啟 ai-service」真的能恢復 | ✅ |
+| **B** | `/health` 接上已寫好卻零呼叫的 `check_connection()` | 讓壞掉的狀態看得見（並補上 `/health` 的規格） | ✅ |
+| **D** | startup 維持不 crash | 保留 Disposability；因為有 A 與 B，吞例外不再是永久傷害 | ✅ |
+| 順帶 | `rag_service.py` docstring 與實作落差 | 文末「順帶發現」第 3 項 | ✅ |
+
+**問題 2：確認要動 `ai-service`（Python）與 `start-all-services.bat` 嗎？** → 確認要，
+使用者指示「接受修 bug 4」，兩者都在範圍內。
+
+## 這輪建立的工作約定（請延續）
+
+1. **絕對不可以靠推測與猜測，一定要找到證據才能寫**（使用者明確要求）。查不到證據的
+   一律標記「未證實」並寫明還缺什麼，不要升格成結論。這輪因此推翻了 3 項原本的錯誤描述。
+2. **列出問題時不要自行做範圍分類去篩選或降權**。Bug 4 是後端問題，仍與其他三項平等調查、
+   平等呈現；順帶發現的問題也全部列進「調查／修復中順帶發現」，由使用者決定取捨。
+3. **修 bug 不可以違背設計原則與規格**。使用者特別確認過這點，已逐條比對
+   《前端系統設計原則》《後端系統設計原則》《後端專案優化標準程序》與各服務 openspec，
+   結論是四個 bug 都是**失誤**、不是原則的必然結果，且四項修法都**更**符合原則
+   （詳見各 bug 的「已修復」區塊）。
+4. **可觀察的行為改動要先反映在 spec 再改碼**（SOP 貫穿原則 #6）。Bug 2 就是先改
+   `lobby-ui/spec.md` 才動 `character-tooltip.js`。
+5. **驗證要用「跑起來」而不是「讀過了」**。特別注意：`persona-nexus-character` 的
+   `npm run build` **不能當驗證**（見下方環境陷阱）。
+6. **關鍵節點停下來跟使用者核對**，不擅自啟動服務、不擅自擴大範圍。
+
+## 環境現況與陷阱（接手前務必知道）
+
+**服務狀態（2026-07-26 交接當下）**：
+
+```
+8080  502（Caddy 容器還活著，但上游全掛）      5173/5174/5175/5176  down
+8000  down（api-gateway）                      6001  down（ai-service）
+6333  down（Qdrant）                           11434 up（Ollama）
+docker: 只剩 nexus-caddy 在跑
+```
+
+要測試得先跑 `start-all-services.bat`（**必須先開 Docker Desktop**）。
+前一個聊天室沒有擅自啟動這些服務。
+
+**陷阱 1｜四個前端各有獨立的巢狀 git repo**
+平台根目錄下 `git diff` 看不到前端的改動，必須 `git -C persona-nexus-<name> diff`。
+這點害第一次查 Bug 1 時 `git diff` 查無結果、差點誤判。
+
+**陷阱 2｜`persona-nexus-character` 的 `npm run build` 沒有驗證效力**
+`vite.config.js` 沒設 `rollupOptions.input` 多頁入口，build 只涵蓋 `index.html`（7 modules），
+**完全沒編譯到 `creator-create.html`／`creator-edit.html` 這兩個真正的主頁面**。
+改 `create.js`／`edit.js` 後 build 通過**不代表任何事**。
+（lobby 與 chat 的 build 則是完整的，可以用。）
+
+**陷阱 3｜Qdrant 容器目前是 `--rm`**（bat 已於 2026-07-26 修好，但**舊容器不受影響**——
+機器上若還跑著先前用 `--rm` 起的容器，下面這段仍然成立。先 `docker rm -f qdrant`
+再跑一次 `start-all-services.bat` 才會換成新設定，`qdrant_storage` 資料卷不受影響。）
+不要從 Docker Desktop 的 Containers 頁關掉它——`--rm` 會讓它直接消失，
+而從 Images 頁按 ▶ 重開會得到一個**沒有 port 對應、沒有資料卷**的全新容器，
+這正是 Bug 4 的成因。容器不見了就重跑 `start-all-services.bat`，
+或手動下完整指令（`-v qdrant_storage:/qdrant/storage` 絕不能漏）。
+
+## 驗證腳本放在哪
+
+三份驗證腳本寫在前一個聊天室的 scratchpad，**已隨對話結束失效**，需要時請照下列說明重寫
+（都不需要啟動任何服務，秒級可跑）：
+
+- **Bug 1**：讀 `create.js`／`edit.js` 原始碼，正則抽出常數定義與所有
+  `location.href = ...` 的運算式，用 `new URL(literal, base)` 解析，
+  斷言結果為 `http://localhost:8080/my-characters`／`/login/`，並斷言運算式中不含
+  `` ` `` 或 `+`（確保沒有拼接）。
+- **Bug 2／3**：用最小 DOM stub（`globalThis.document = { createElement: ... }` 之類）
+  在 Node 裡直接 `import` 真實模組來跑，不需要 jsdom、不需要 Vite。
+  Bug 2 要模擬 `mouseenter` → `click`／`popstate` 的事件流程；
+  Bug 3 要跑「空陣列建立」「非空建立」「刪光後 sync」「空↔非空來回」四條路徑。
+
+詳細做法見文末〈調查方法備註〉。
+
+## 建議的閱讀順序
+
+1. **本文件**（就是這份）——四個 bug 的完整調查報告、證據、修復記錄。最重要。
+2. 《前端網頁手動測試task.md》——測試主文件，第一～四階段完整記錄、第五階段測到 5.6 中斷。
+   ⚠️ 文末「發現的新問題」**仍是舊版說法**，三項錯誤描述尚未同步回去（見「完成後的收尾動作」）。
+3. 《前情提要-前端瀏覽器測試.md》——更早的背景脈絡。
+4. 需要判斷「修法會不會違背原則」時才讀：《前端系統設計原則》《後端系統設計原則》
+   《後端專案優化標準程序》＋ 對應服務的 `openspec/specs/*/spec.md`。
+
+## 全部修完之後要做什麼
+
+使用者的計畫是**四個 bug 全修完再一起做真人瀏覽器測試**。屆時：
+
+1. 開 Docker Desktop → 跑 `start-all-services.bat` → 確認 8080 起得來。
+2. 依各 bug 的「待辦 3」逐條實測（每個 bug 的待辦 3 都寫了具體要走哪幾條路徑）。
+3. 接著回《前端網頁手動測試task.md》繼續第五階段剩餘的 5.6/5.7，再往第六～八階段走。
+4. 收尾動作見本文件最後一節。
+
+---
+
+## 調查報告總覽（2026-07-26 補充）
+
+四個 bug 已逐一追查到根因，每一項的結論都附可覆核的證據（原始碼行號、`git diff`、可執行的
+重現腳本、實機實驗）。**凡是查不到證據的推測，一律標記為「未證實」並寫明還缺什麼**，沒有把
+猜測寫成結論。
+
+調查後有 **三項原本的描述被證據推翻或需要修正**，修復前務必先看：
+
+| # | 原描述 | 調查結果 |
+|---|--------|----------|
+| 1 | 只有 `create.js:56` 一處，`edit.js`「可能」也有 | **實際有 3 處**（`create.js:56`、`edit.js:78`、`edit.js:101`），另有第 4 處相關但性質不同的 `edit.js:37`。已用 URL 解析器實測確認 |
+| 3 | 例外「蓋掉」了原本該顯示的「建立失敗」錯誤訊息 | **不成立**。錯誤文字在 `chat.js:203` 已先設定完成，例外發生在其後的 `chat.js:632`，覆蓋層文字實際上有顯示。真正的後果是另外三項（見 Bug 3） |
+| 4 | 根因是 `qdrant-client`／`httpx` 連線池快取了失效連線 | **已用實機實驗推翻**。同一個 client 物件在 Qdrant 回來後會自動恢復。真正的根因是另外三件事（見 Bug 4） |
+| 4 | 隱含假設「是本輪（前端）優化造成的」 | **部分否定、部分證實**。ai-service 的三項根因可追到 2026-06-26 與 2026-07-03，早於各輪優化（證據 7）；但**觸發條件（Qdrant 容器的 `--rm`）確實是「佈署優化」`4d1a704`（2026-07-23）引入的**（證據 8）。與**前端**優化無關 |
+
+**四個 bug 的嚴重度重新評估**：Bug 1 是唯一會 100% 讓使用者卡在打不開的錯誤頁的功能性故障，
+應優先修。Bug 3 的實際使用者可見影響比原本記載的小。Bug 4 不是連線韌性問題，而是啟動順序 +
+吞例外 + 健康檢查失真三者疊加。
+
+> 說明：Bug 4 位於 `ai-service`（後端）。依先前的回饋，這裡不做「是不是前端範圍」的自行篩選或
+> 降權，一律與其他三項平等調查、平等呈現，範圍與優先順序的取捨留給使用者決定。
+
+---
+
+## Bug 1：建立角色成功後，自動跳轉壞掉（雙斜線 URL 導致解析成錯誤網域）
+
+> ### ✅ 已修復（2026-07-26，採 B 方案：完整路徑常數）
+>
+> **改動**：`src/create.js` 與 `src/edit.js` 移除 `LOGIN_APP_URL`／`LOBBY_APP_URL` 兩個
+> 前綴常數，改為兩個完整路徑常數，**所有呼叫點不再做任何字串拼接**：
+>
+> ```js
+> const LOGIN_URL = '/login/';                 // persona-nexus-auth
+> const MY_CHARACTERS_URL = '/my-characters';  // persona-nexus-lobby 的「我的角色」頁
+>
+> window.location.href = LOGIN_URL;
+> window.parent.location.href = MY_CHARACTERS_URL;
+> ```
+>
+> 一次修掉 4 個點：`create.js:56`、`edit.js:78`、`edit.js:101`（雙斜線）與
+> `edit.js:37`（`/login//`）。不拼接，這類 bug 結構上不可能再發生。
+>
+> **為什麼是 B 方案而不是把常數改成 `''`**：lobby 掛在網站根目錄，前綴本來就是空的，
+> 「值等於空字串的前綴常數」不帶任何資訊，還把拼接陷阱留給下一個人。
+> 符合 KISS、最低能力原則（能用普通常數就不用樣板字串插值）與 DRY／SSOT。
+> lobby 的 `CHARACTER_APP_URL = '/character'` 等前綴常數維持不變——那些是**真前綴**且
+> 底下掛多條路徑，適用前綴常數；規則一致，只是情況不同。
+>
+> **不需要改規格**：`character-ui/spec.md:84, 117, 149` 只規定可觀察行為「導向
+> `/my-characters`」，未提及常數名稱或值，故本次屬純實作細節調整，不觸發 SOP
+> 貫穿原則 #6「行為變更要顯性」。（另注意：那三行規格分別對應建立／更新／刪除，
+> 正好佐證證據 3 說的「三條流程全壞」。）
+>
+> **驗證狀態**：
+> - ✅ `node --input-type=module --check`：兩檔語法正確
+> - ✅ 抽出原始碼實際字面值餵給 WHATWG URL 解析器（瀏覽器同一套規則）：
+>   4 個跳轉點全部解析為 `http://localhost:8080/my-characters` 與
+>   `http://localhost:8080/login/`，並確認已無任何 `` ` `` 或 `+` 拼接（5/5 通過）
+> - ✅ `grep` 確認全專案無 `APP_URL` 殘留
+> - ⚠️ **`npm run build` 不算數**：`vite.config.js` 沒有設 `rollupOptions.input`
+>   多頁入口，build 只涵蓋 `index.html`（7 modules），**完全沒有編譯到
+>   `creator-create.html`／`creator-edit.html` 這兩個真正的主頁面**。
+>   這是本次順帶發現的既有問題，與 Bug 1 無關，另記於文末「調查中順帶發現」。
+> - ⏳ **尚未經真人瀏覽器實測**——四個前端 dev server 當時皆已關閉，未擅自啟動。
+>   仍須依下方待辦 3 走一次真實流程才算結案。
+
+- **服務**：`persona-nexus-character`
+- **檔案**：`src/create.js:23, 56`（`edit.js` 可能有同樣問題，待確認，見下方「待辦」）
+- **嚴重度**：高——每次建立角色都會 100% 重現，使用者會被導到一個打不開的錯誤頁面
+- **現象**：建立角色成功、訊息框顯示成功訊息後，1.5 秒自動跳轉時網址列變成
+  `http://my-characters/`，出現 `ERR_NAME_NOT_RESOLVED`，沒有正確跳回大廳「我的角色」頁。
+  已重現兩次（兩次建立角色都發生），確認穩定可重現。
+- **根因**：`LOBBY_APP_URL` 定義成相對路徑常數 `'/'`（`create.js:23`），但第 56 行的拼接
+  `` `${LOBBY_APP_URL}/my-characters` `` 在 `LOBBY_APP_URL === '/'` 時算出
+  `'//my-characters'`——開頭雙斜線的字串被瀏覽器當成 protocol-relative URL（要連到叫
+  `my-characters` 的網域），因此被導向 `http://my-characters/` 而非
+  `http://localhost:8080/my-characters`。
+- **確認方式**：`git diff -- persona-nexus-character/src/create.js`，確認這是本輪 SOP 優化
+  尚未 commit 的改動；優化前用絕對網址拼接沒有這個問題。
+
+### 🔍 調查報告（2026-07-26）
+
+**結論：根因描述正確，但影響範圍被低估——實際有 3 處相同缺陷，不是 1 處。**
+
+**證據 1｜`git diff` 確認是本輪優化引入（注意：四個前端各自有獨立的巢狀 git repo，
+要在子目錄下跑 `git -C persona-nexus-character diff`，在平台根目錄跑 `git diff` 看不到）**
+
+`create.js` 與 `edit.js` 的 diff 都顯示同一組改動：
+
+```diff
+-const LOGIN_APP_URL = configLoadError ? 'http://localhost:5173' : config.frontends.web;
+-const LOBBY_APP_URL = configLoadError ? 'http://localhost:5175' : config.frontends.lobby;
++const LOGIN_APP_URL = '/login/';
++const LOBBY_APP_URL = '/';
+```
+
+而拼接那一行 `` `${LOBBY_APP_URL}/my-characters` `` **完全沒有跟著調整**。優化前
+`LOBBY_APP_URL` 是 `http://localhost:5175`，拼出來是合法的
+`http://localhost:5175/my-characters`；改成 `'/'` 之後才變成 `'//my-characters'`。
+確認為本輪 SOP 優化引入、尚未 commit 的迴歸。
+
+**證據 2｜用 WHATWG URL 解析器（瀏覽器用的同一套規則）實測解析結果**
+
+以 `http://localhost:8080/character/creator-create.html` 為 base：
+
+| 出處 | 字面值 | 解析結果 | 判定 |
+|------|--------|----------|------|
+| `create.js:56`、`edit.js:78`、`edit.js:101` | `"//my-characters"` | `http://my-characters/` | ❌ 壞掉 |
+| `create.js:37` | `"/login/"` | `http://localhost:8080/login/` | ✅ 正確 |
+| `edit.js:37` | `"/login//"` | `http://localhost:8080/login//` | ⚠️ 見證據 4 |
+| `lobby/src/main.js:40`（對照組） | `"/login/"` | `http://localhost:8080/login/` | ✅ 正確 |
+
+解析結果 `http://my-characters/` 與測試時實際觀察到的網址列內容、`ERR_NAME_NOT_RESOLVED`
+完全吻合，根因確立，無推測成分。
+
+**證據 3｜全域掃描，確認共有 3 處（不是待辦 2 說的「可能」，是確定有）**
+
+對四個前端的 `src/` 全面 grep `APP_URL` 後，會產生雙斜線的共 3 處：
+
+- `persona-nexus-character/src/create.js:56` — 建立角色成功後跳轉
+- `persona-nexus-character/src/edit.js:78` — **更新**角色成功後跳轉
+- `persona-nexus-character/src/edit.js:101` — **刪除**角色成功後跳轉
+
+三處的字面值都是 `` `${LOBBY_APP_URL}/my-characters` ``，`LOBBY_APP_URL` 都是 `'/'`。
+代表第六階段還沒測的「編輯角色」與「刪除角色」兩條流程，跳轉必定也是壞的。
+
+對照組：`persona-nexus-lobby/src/main.js:19` 用 `'/login'`（結尾**不**帶斜線）+ `` `${...}/` ``，
+`persona-nexus-chat/src/main.js:8` 同樣寫法，兩者都正確。問題只出在 character 這個服務。
+
+**證據 4｜`edit.js:37` 是相關但性質不同的第 4 處，已實測，不是使用者遇到的故障**
+
+`edit.js:37` 是 `` `${LOGIN_APP_URL}/` ``，`LOGIN_APP_URL = '/login/'` → 算出 `/login//`。
+它只有**一個**開頭斜線，不是 protocol-relative URL，所以不會跑去解析網域。實際打過 Caddy 測：
+
+```
+GET http://localhost:8080/login/   -> HTTP 200, 1833 bytes
+GET http://localhost:8080/login//  -> HTTP 200, 1823 bytes   ← 仍然能開
+```
+
+差異在於 Vite 對 `/login//` **沒有套用 base 改寫**，回傳的是未轉換的原始 HTML：
+
+```diff
+-  <link rel="stylesheet" href="/login/src/style.css">     # /login/  正確改寫
++  <link rel="stylesheet" href="./src/style.css">          # /login// 未改寫
+```
+
+相對路徑 `./src/style.css` 以 `/login//` 為 base 又剛好解析回 `/login//src/style.css`，
+實測也是 HTTP 200，所以**目前碰巧仍能正常運作**。這是拼接不一致造成的非正規化網址，
+建議一併修掉以免日後 base 設定一變就爆，但它**不是**使用者這次遇到的故障，
+修復時不要把它跟前 3 處混為一談。另注意 `create.js:37` 寫的是 `` `${LOGIN_APP_URL}` ``
+（沒有多加斜線）、`edit.js:37` 寫的是 `` `${LOGIN_APP_URL}/` ``——同一個專案裡兩個檔案
+對同一個常數的用法就已經不一致，這正是缺陷的來源。
+
+**~~建議修法~~（已被採用的方案取代，保留供對照）**：原先建議對齊 lobby／chat 的
+「不帶結尾斜線的前綴常數 + `` `${CONST}/xxx` `` 拼接」。經與使用者討論後**改採 B 方案**
+（完整路徑常數、呼叫點零拼接），理由見本節開頭的「已修復」區塊——關鍵差別在於
+只要還留著拼接，這類 bug 就仍有再犯的空間。
+
+- [x] ~~**待辦 1**：修正 `create.js:56` 的拼接邏輯，避免雙斜線。~~
+  → **已完成**，且採用比原提案更根本的做法（B 方案，見本節開頭）。
+  原提案的 `=== '/' ? ... : ...` 三元判斷寫法**未採用**：它只修得掉 1 處，
+  還會讓 3 個呼叫點各自重複同一份判斷邏輯（違反 DRY）。
+- [x] ~~**待辦 2**：檢查 `persona-nexus-character/src/edit.js` 是否有同樣的
+  `LOBBY_APP_URL`/`LOGIN_APP_URL` 拼接 pattern~~ → **調查完成：確定有，見上方證據 3／4**。
+  `edit.js:78`（更新後跳轉）與 `edit.js:101`（刪除後跳轉）與 `create.js:56` 完全相同，
+  已一併修；`edit.js:37`（`/login//`）也同時處理掉了。
+- [ ] **待辦 3**：修完後回《前端網頁手動測試task.md》第三階段 3.2、第六階段 6.1/6.2 重新
+  實測一次自動跳轉是否正常。**注意：第六階段本來就還沒開始測，證據 3 已證明編輯／刪除的
+  跳轉必定也是壞的，重測時這兩條都要走到，不能只測建立。**
+  **這是 Bug 1 唯一還沒完成的項目**——靜態驗證已全綠，但真人瀏覽器實測尚未進行
+  （當時四個 dev server 都已關閉）。三條路徑都要走：建立成功後跳轉、更新成功後跳轉、
+  刪除成功後跳轉，網址列都應停在 `http://localhost:8080/my-characters`。
+
+---
+
+## Bug 2：大廳角色卡片 tooltip 點擊進入聊天室後不會消失，殘留畫面
+
+> ### ✅ 已修復（2026-07-26）
+>
+> **先確認了一件事：「把 tooltip 改成卡片的子元素、讓它隨卡片一起被移除」這個最結構性的
+> 修法不可行。** 查 `src/style.css:337-340` 發現 `.character-card:hover` 帶
+> `transform: translateY(-2px)`——transform 會讓 `position: fixed` 的後代改以卡片為定位
+> 基準；`.character-card` 本身又有 `overflow: hidden`（`:331`）會裁切。兩者都剛好在浮窗
+> 要顯示的那一刻發作。所以 body 級單例是**必要的**，不是可以順手改掉的結構。
+>
+> **既然生命週期無法結構性綁定，就補齊事件涵蓋範圍**，全部封裝在
+> `src/character-tooltip.js` 內部——`home.js` 與 `main.js` 完全不用改，也不需要知道
+> 浮窗的存在（符合模組邊界與資訊隱藏）：
+>
+> ```js
+> function hideTooltip() {                     // 抽出共用隱藏函式
+>   if (tooltipEl) tooltipEl.style.opacity = '0';
+> }
+>
+> // getTooltip() 內，單例建立時一併註冊（一輩子只註冊一次）
+> window.addEventListener('popstate', hideTooltip);
+>
+> // attachIntroTooltip() 內
+> card.addEventListener('mouseleave', hideTooltip);
+> card.addEventListener('click', hideTooltip);   // ← 新增，修復重點
+> ```
+>
+> 涵蓋兩條「卡片在指標仍停留其上時被銷毀」的路徑：
+> 1. **點卡片導頁**（實測 100% 重現的那條）—— `click` 與導頁在同一個事件裡，
+>    不必等任何指標移動。
+> 2. **瀏覽器上一頁／下一頁**（調查修法時另外想到並確認可觸發的路徑）——
+>    `popstate` 同樣會在指標不動的情況下重繪內容區。
+>
+> **未採用原待辦 1 的寫法**（匯出 `hideTooltip()` 給 `home.js` 在導頁前呼叫）：
+> 那會讓 `home.js` 反過來得知道浮窗的實作細節，而且只擋得住 `home.js` 那一條路徑。
+> 現在的做法讓模組自己負責自己的生命週期，涵蓋範圍更廣、耦合更少。
+>
+> **規格已先行更新**（依 SOP 貫穿原則 #6「行為變更要顯性」，先改規格才改碼）：
+> `openspec/specs/lobby-ui/spec.md` 的〈角色卡簡介浮窗〉需求新增了「不得只依賴
+> `mouseleave`」的規定與掛 body 的理由，兩個 Scenario 改寫為修復後行為，
+> 原本標記「已知缺陷」的 Scenario 改為歷史紀錄。`openspec validate --all` 全綠。
+>
+> **驗證狀態**：
+> - ✅ 用最小 DOM stub 載入真實模組跑事件流程：**8/8 通過**——
+>   hover 顯示、click 隱藏、popstate 隱藏、mouseleave 仍可隱藏（未退化）、
+>   空 introduction 不綁事件、浮窗單例只建立一次、popstate 只註冊一次
+> - ✅ `npm run build` 通過（lobby 是完整多入口建置，涵蓋本次改動）
+> - ✅ `openspec validate --all` 全綠
+> - ⏳ **尚未經真人瀏覽器實測**，見待辦 3
+>
+> **未處理、留作已知限制**：原待辦 2 的「SPA 路由切換時統一清理 body 級殘留元素」
+> **沒有做**。理由是 lobby 目前沒有集中的切頁收口（`main.js:55-92` 的
+> `restoreRouteFromUrl()` 只管初次載入，之後各頁各自 `import` + `pushState`），
+> 要做得先建一個共用切頁入口，範圍遠超修這個 bug。證據 5 找到的
+> `message-utils.js` 同型問題因此**仍然存在**，已列入文末「調查／修復中順帶發現」。
+
+- **服務**：`persona-nexus-lobby`
+- **檔案**：`src/character-tooltip.js`（`attachIntroTooltip()` 的 `mouseleave` handler）、
+  `src/home.js`（卡片 click handler）
+- **嚴重度**：中——不影響功能，但視覺上很明顯的殘留 bug，且是本輪新增模組的問題
+- **現象**：大廳首頁滑鼠移到角色卡片上，右側浮現簡介 tooltip；點卡片進入聊天室後，tooltip
+  沒有消失，殘留疊在聊天室畫面上，直到回大廳、對任一張卡片完整「滑入再滑出」一次才會消失。
+- **根因**：tooltip 元素是掛在 `document.body` 下的全站共用單例，只靠 `mouseleave` 把
+  `opacity` 設回 `'0'`「隱藏」，從未真的從 DOM 移除。lobby 是 SPA、切頁不整頁重載，
+  `document.body` 跨頁延續；而唯一的隱藏路徑掛在點擊後隨即被銷毀的卡片元素上。
+
+### 🔍 調查報告（2026-07-26）
+
+**結論：根因成立，且可以只用原始碼證明，不需要依賴「瀏覽器搶不搶得到 `mouseleave`」這種
+無法驗證的說法。原描述中「很可能搶在派發之前」的推測措辭已改寫為下方可覆核的事實。**
+
+**證據 1｜全專案只有一條隱藏路徑，而它掛在會被銷毀的元素上**
+
+對 `persona-nexus-lobby` 全專案 grep `tooltip`，命中只有兩個檔案：
+`src/character-tooltip.js` 本身，以及 `src/home.js:2, 73`（唯一的使用者）。
+`character-tooltip.js` 全檔 48 行，**把 `opacity` 設回 `'0'` 的地方只有第 46 行一處**：
+
+```js
+// character-tooltip.js:45-47
+card.addEventListener('mouseleave', () => {
+  if (tooltipEl) tooltipEl.style.opacity = '0';
+});
+```
+
+也就是說：整個 lobby 沒有任何其他程式碼會隱藏這個 tooltip；沒有 `hideTooltip()` 匯出，
+沒有路由層的清理，沒有 `remove()`。唯一的隱藏開關綁在 `card` 上。
+
+**證據 2｜卡片在導頁時必定被銷毀，該監聽器再也不可能執行**
+
+`home.js:56-60` 的點擊處理器：
+
+```js
+cardElement.addEventListener('click', async (e) => {
+  e.preventDefault();
+  const { loadChatPage } = await import('./chat-page.js');
+  await loadChatPage(character.id);
+});
+```
+
+`chat-page.js:9-12`：
+
+```js
+const contentArea = document.getElementById('content-area');
+const response = await fetch('/src/chat.html');
+const html = await response.text();
+contentArea.innerHTML = html;      // ← 這一行把整個角色卡格線（含 cardElement）換掉
+```
+
+`contentArea.innerHTML = html` 會丟棄 `#content-area` 底下所有子節點，`cardElement`
+連同它的 `mouseleave` 監聽器一起消失。而使用者是「滑上去→原地點下去」，滑鼠指標
+全程沒有離開卡片，**不存在任何一次真正的指標移出動作**能在銷毀前觸發 `mouseleave`。
+
+**證據 3｜tooltip 元素本身不在被清掉的範圍內，所以會留在畫面上**
+
+`character-tooltip.js:12` 是 `document.body.appendChild(tooltipEl)`——掛在 `body` 下，
+不是 `#content-area` 底下，因此 `contentArea.innerHTML = html` 清不到它。
+`src/style.css:403-417` 的樣式進一步確認它會浮在最上層：
+
+```css
+#character-intro-tooltip {
+  position: fixed;      /* 不隨內容區捲動，停在原本卡片的視窗座標 */
+  opacity: 0;
+  pointer-events: none;
+  z-index: 1000;        /* 蓋在聊天室畫面之上 */
+}
+```
+
+`tooltipEl` 是模組層級變數（`character-tooltip.js:5`），ES module 在 SPA 中只求值一次，
+所以這個單例跨頁存活。三項合起來：**元素還在 body、`opacity` 仍是 `'1'`、`z-index:1000`
+浮在最上層 → 殘留在聊天室畫面上**，與實測現象完全一致。
+
+**證據 4｜「回大廳 hover 任一卡片才消失」也被同一組程式碼解釋**
+
+回大廳時 `home.js:9` 同樣執行 `contentArea.innerHTML = html`，重新建立一批**新的**卡片並
+重新綁定監聽器（`home.js:73`）。對新卡片滑入 → `mouseenter` 走 `getTooltip()`，因為
+`tooltipEl` 非 null 而複用**同一個**元素（`character-tooltip.js:9`），重新定位後設回
+`opacity = '1'`；滑出 → 新卡片的 `mouseleave` 才終於把它設成 `'0'`。使用者觀察到的
+「一定要完整滑入再滑出一次才消失」被逐步對上，無殘留疑點。
+
+**關於「瀏覽器會不會在元素被移除時補送 `mouseleave`」**：W3C UI Events 規格把 `mouseleave`
+定義為「指標裝置移出元素邊界時」觸發，**元素被移除並不是指標移動**，規格沒有保證會補送，
+各家瀏覽器行為也不一致。這一點無法在沒有瀏覽器自動化工具的情況下取得決定性證據（本機
+未安裝 Playwright／Puppeteer）。但這不影響結論：使用者已 100% 重現殘留，代表在實際環境中
+它確實沒有被送出或沒有起作用；而證據 1 已證明**不該把唯一的隱藏路徑押在這個不保證的事件上**，
+這才是要修的地方。
+
+**證據 5｜同類結構問題不只 tooltip 一處，`message-utils.js` 也中招（調查中額外發現）**
+
+grep `document.body.appendChild`，lobby 全專案共 4 處，逐一查對生命週期：
+
+| 位置 | 是否會殘留 | 依據 |
+|------|-----------|------|
+| `character-tooltip.js:12` | ❌ **會殘留** | 只設 `opacity`，全檔無 `remove()`（證據 1） |
+| `my-character.js:76`（角色卡選單） | ✅ 安全 | `dismissMenu()` 有 `menu.remove()`（`:54-57`），且 `:66` 的編輯選項在導頁**之前**先呼叫 `dismissMenu()` |
+| `conversation-history.js:42`（歷史選單） | ✅ 安全 | 同上，`dismissMenu()` 有 `menu.remove()`（`:13-16`） |
+| `message-utils.js:6`（訊息框） | ⚠️ **條件性會殘留** | 見下方說明 |
+
+`message-utils.js` 的 `getMessageBox()` 是「先找現有的 `#message-box`，找不到才建一個掛到
+`document.body`」。而 `public/src/home.html:8` 與 `public/src/my-character.html:8` 這兩個樣板
+**自帶** `<div id="message-box">`，所以在首頁／我的角色頁時它抓到的是 `#content-area` 內的那個，
+導頁時會隨 `innerHTML` 一起被清掉，沒問題。但在**聊天室頁與角色編輯頁**（`chat.html`／
+`character-edit.html` 樣板沒有這個 div）就會走到 `document.body.appendChild`，變成 body 級單例，
+而且它同樣**沒有任何 `remove()`**，只靠 `display:none` 隱藏。
+
+具體可觸發路徑：`conversation-history.js:33` 的 `showMessage('error', \`刪除失敗: ...\`)`
+**沒有傳 `autoHideMs`**（對照 `home.js:81` 有傳 `3000`），側邊欄在所有頁面都在，
+所以「人在聊天室 → 側邊欄刪除對話失敗」就會產生一個掛在 body、不會自動隱藏、
+也不會在切頁時被清掉的錯誤訊息框。這條路徑目前**尚未實測驗證**（需要製造刪除失敗），
+但結構與 tooltip 完全同型，先記錄在此。
+
+**修法評估（依證據調整）**：原待辦 1（匯出 `hideTooltip()` 給 `home.js` 在導頁前呼叫）
+能解決本次實測到的問題，但只擋得住「從首頁點卡片」這一條路徑，而且證據 5 顯示 body 級元素
+殘留不是單一個案。問題的本質是「body 級 UI 元素的生命週期沒有跟著 SPA 路由走」，
+因此**原待辦 2 應從「選擇性」升為建議的主要修法**：在路由切換的單一收口處統一清理。
+可惜 lobby 目前沒有集中的路由切換函式（`main.js` 的 `restoreRouteFromUrl()` 只處理初次載入，
+之後各頁是各自 `import` + `pushState`，見 `main.js:55-92` 與 `sidebar.js:76`），
+要做根本修法得先有一個共用的「切頁」入口，成本比待辦 1 高。兩者的取捨留給使用者決定。
+
+- [x] ~~**待辦 1**：`character-tooltip.js` 增加一個可從外部呼叫的隱藏函式（例如匯出
+  `hideTooltip()`），在 `home.js` 的卡片 `click` handler 觸發導頁**之前**主動呼叫一次。~~
+  → **已完成，但改成不匯出的做法**：`hideTooltip()` 留在模組內部，由模組自己綁在
+  卡片的 `click` 與 window 的 `popstate` 上。原提案要 `home.js` 主動呼叫，會讓呼叫端
+  反過來得知道浮窗的實作細節，且只擋得住 `home.js` 一條路徑。
+- [ ] **待辦 2**（更根本，選擇性）：評估是否要把 tooltip 隱藏邏輯改成不依賴 `mouseleave`
+  單一事件保證觸發，例如在每次 SPA 路由切換時統一清理殘留的 body 級 UI 元素。
+  → **本次未做，維持開放**。tooltip 本身已透過 `click` + `popstate` 涵蓋所有已知路徑，
+  但這條待辦真正的價值在於**一併解決 `message-utils.js` 的同型問題**（證據 5），
+  那個問題目前仍然存在。需要先替 lobby 建立一個共用的切頁收口才能做，範圍較大。
+- [ ] **待辦 3**：修完後回《前端網頁手動測試task.md》第四階段 4.2 重新實測：hover 卡片 →
+  點擊進入聊天室 → 確認 tooltip 立即消失、不殘留。
+  **另外加測本次新涵蓋的第二條路徑**：hover 卡片 → 不移開滑鼠 → 按瀏覽器上一頁（或 Alt+←）
+  → 確認 tooltip 同樣立即消失。
+
+---
+
+## Bug 3：聊天室輪詢逾時（空訊息陣列）時，`virtualMessageList.js` 拋出未捕捉例外
+
+> ### ✅ 已修復（2026-07-26）
+>
+> **改動**：`persona-nexus-chat/src/virtualMessageList.js` 的 `computeRange()` 開頭
+> 加上空陣列的提前返回：
+>
+> ```js
+> if (items.length === 0) {
+>   return { start: 0, end: -1, offsetTop: 0 };
+> }
+> ```
+>
+> `end` 回 `-1` 讓 `renderWindow()` 的 `for (let i = start; i <= end; i++)` 自然不執行，
+> 同時仍會走「移除已離開視窗的節點」那一段，把上一輪殘留的氣泡清乾淨。
+>
+> **只做待辦 1，沒做待辦 2**：待辦 2（在 `chat.js:632` 加 `messages.length > 0` 判斷）
+> 只擋得住其中一條路徑，而且會把「空陣列是特殊情況」這個知識重複到第二個地方
+> （DRY／KISS）。待辦 1 是通用模組該自己守的邊界，一改就同時涵蓋證據 1 與證據 4 兩條路徑，
+> 因此不再加第二道判斷。
+>
+> **標題已修正**：原標題後半「蓋掉原本該顯示的『建立失敗』錯誤訊息」經證據 2 確認不成立，
+> 已刪除（錯誤文字在 `chat.js:203` 就已寫入 DOM，例外發生在其後）。
+>
+> **驗證狀態**：
+> - ✅ 用最小 DOM stub 載入真實模組跑 4 條路徑：**4/4 通過**——
+>   以空陣列建立（逾時路徑）、以非空陣列建立（正常流程未退化）、
+>   非空→刪光成空後 `sync()`（證據 4 的回溯刪除路徑）、空↔非空來回切換
+> - ✅ 修復前的重現腳本已無法再重現例外（原本必拋 TypeError）
+> - ✅ `npm run build` 通過（13 modules，chat 是單頁完整建置，確實涵蓋本次改動）
+> - ⏳ **尚未經真人瀏覽器實測**，見待辦 3
+
+- **服務**：`persona-nexus-chat`
+- **檔案**：`src/virtualMessageList.js`（`computeRange()`）、`src/chat.js:632`
+- **嚴重度**：中——只在「聊天室初次建立就失敗/逾時」這個邊界情境觸發，不影響已建立成功的
+  正常聊天流程，但一旦觸發，畫面會顯示未預期的 JS 錯誤而非設計中的錯誤訊息
+- **現象**：聊天室輪詢滿 120 次逾時後，Console 出現
+  `Uncaught TypeError: Cannot read properties of undefined (reading 'id') at keyOf (chat.js:78)`，
+  呼叫鏈：`initChat → renderMessages → createVirtualMessageList → sync → computeRange → keyOf`。
+  畫面沒有正確顯示規格設計中「聊天室建立失敗，請重新整理頁面再試」的錯誤覆蓋層文字。
+- **根因**：`computeRange(items)` 處理空陣列（`items.length === 0`）時有漏洞：找不到任何
+  項目的迴圈跑完後 `i === items.length`（`0 === 0`）成立，接著執行
+  `start = Math.max(0, items.length - 1)`（空陣列時算出 `0`），再執行
+  `startOffset = offset - slotHeight(keyOf(items[start]))`——但 `items[0]` 在空陣列上是
+  `undefined`，`keyOf(undefined)` 也就是存取 `undefined.id`，直接拋出例外。
+- **觸發路徑**：`chat.js:632`（`initChat` 尾端「初始化渲染」那行）在
+  `await initializeChat(characterId)` 執行完後，**不論成功或失敗都無條件呼叫一次
+  `renderMessages()`**。`initializeChat()` 逾時失敗時只顯示錯誤覆蓋層文字然後 `return`，
+  `messages` 仍是初始值 `[]`，這次無條件呼叫就以空陣列觸發上述漏洞。
+
+### 🔍 調查報告（2026-07-26）
+
+**結論：崩潰本身完全屬實，已寫成可重複執行的腳本證明。但「蓋掉錯誤訊息」這個描述經查
+不成立，實際後果是另外三項——修復前要先知道自己在修什麼。**
+
+**證據 1｜可執行的重現腳本（不改動任何專案原始碼）**
+
+用最小 DOM stub 直接 import 真實的 `virtualMessageList.js`，以 `chat.js:74-80` 完全相同的
+參數呼叫，`getItems` 回傳空陣列：
+
+```
+✅ 重現成功
+   例外類型 : TypeError
+   訊息     : Cannot read properties of undefined (reading 'id')
+   堆疊     :
+     at keyOf         (呼叫端提供的 (m) => m.id)
+     at computeRange  (persona-nexus-chat/src/virtualMessageList.js:86)
+     at sync          (persona-nexus-chat/src/virtualMessageList.js:232)
+     at createVirtualMessageList (persona-nexus-chat/src/virtualMessageList.js:255)
+
+✅ 對照組（1 筆訊息）：未拋例外，證明問題專屬於空陣列路徑
+```
+
+堆疊與測試時 Console 觀察到的
+`Uncaught TypeError: Cannot read properties of undefined (reading 'id') at keyOf (chat.js:78)`
+完全對得上（`chat.js:78` 正是 `keyOf: (m) => m.id` 那一行）。根因與觸發點皆已確立，
+不是推測。
+
+逐行對照 `computeRange([])` 的算式：`for (; i < 0; i++)` 不執行 → `i` 維持 `0` →
+`if (0 === 0)` 成立 → `start = Math.max(0, -1) = 0` → `keyOf(items[0])` 而 `items[0]`
+是 `undefined` → 存取 `undefined.id` → 拋錯。
+
+**證據 2｜⚠️ 修正原描述：錯誤覆蓋層文字其實有顯示，沒有被蓋掉**
+
+原本記載「畫面沒有正確顯示『聊天室建立失敗，請重新整理頁面再試』」。讀 `chat.js` 的執行
+順序後可確認**這個因果關係不成立**：
+
+```js
+// chat.js:200-205（initializeChat 內）
+if (!conversation) {
+  characterStatusEl.textContent = '離線';
+  showInitializing('聊天室建立失敗，請重新整理頁面再試');   // ← 文字在這裡就已寫入 DOM
+  return;
+}
+...
+// chat.js:632（initChat 尾端，上面那行 return 之後才會走到）
+renderMessages();                                          // ← 例外在這裡才發生
+```
+
+`showInitializing()` 的實作（`chat.js:28-33`）是同步的 `initializingMessage.textContent = message`
+＋ `classList.remove('hidden')`，在 `initializeChat` 回傳前就完成了。例外發生在其後，
+不可能回頭把已寫入的文字擦掉。原文件其實已自我標註「實際畫面行為待確認」
+（見《前端網頁手動測試task.md》第 364-365 行），現在確認：**這個推測是錯的**。
+
+**證據 3｜例外的真實後果（改用這三項評估嚴重度）**
+
+例外從 `chat.js:632` 拋出後，`initChat` 的 Promise 被 reject，而 `main.js:26` 是
+`await initChat(characterId)` 且**沒有 try/catch**，所以會成為未捕捉的 module 層級錯誤。
+實際損失的是 632 行之後的東西：
+
+1. **`chat.js:633` 的 `messageInput.focus()` 不會執行**——不過此情境下輸入框本來就被
+   `showInitializing()` 設成 `disabled`，影響輕微。
+2. **`vlist` 永遠停在 `null`**——`chat.js:74` 的 `vlist = createVirtualMessageList({...})`
+   是在函式**拋出時**中斷，賦值從未完成。所以之後每一次 `renderMessages()` 都會重跑
+   `createVirtualMessageList` 並在訊息仍為空時再崩一次。
+3. **Console 出現未捕捉例外**——對使用者是雜訊，對開發是誤導（看起來像渲染層壞了，
+   實際上是後端沒起來）。
+
+反過來說，**設計中的錯誤覆蓋層文字有正常顯示、輸入框有正確保持禁用**，
+所以使用者實際看到的畫面其實是符合設計的。**Bug 3 的嚴重度應下修**：它是一個真實且
+必然發生的例外，值得修，但不像原描述那樣會讓使用者看不到錯誤提示。
+
+**證據 4｜另有一條同源的觸發路徑，但目前被上游條件擋住（記錄備查，不需為它改設計）**
+
+`chat.js:168-169` 的回溯式刪除：
+
+```js
+messages = messages.filter(m => !deletedIdSet.has(m.id));
+renderMessages();
+```
+
+若 `messages` 被清成空陣列，這裡走的是 `vlist.sync()` → 同樣的 `computeRange([])` → 崩潰；
+而且這段包在 `try/catch`（`:170-173`）裡，會被轉成
+`showToast('刪除失敗: Cannot read properties of undefined...')`——**明明後端已刪除成功，
+卻對使用者謊報刪除失敗**。
+
+不過實測前先查了能不能真的走到：`chat-service/src/services/conversationService.js:332-338`
+在建立聊天室時會把角色的 `opening` 存成第一則 `assistant` 訊息，而
+`persona-nexus-character/creator-create.html:53` 的開場白欄位帶 `required`，
+所以正常流程建立的角色一定有開場白 → 第一則訊息必為 assistant；
+再加上 `chat.js:60-62` 的三點選單只在 `msg.role === 'user'` 時才渲染，
+第一則訊息**沒有刪除入口**，`messages` 因此無法經 UI 被清空。
+
+結論：這是一條**程式碼層面存在、但目前被兩個上游條件擋住**的路徑。它成立與否取決於
+另一個服務（`chat-service`）和另一個前端（`persona-nexus-character`）的行為，
+這種跨服務的隱含耦合本身就是風險。**只要照待辦 1 修 `computeRange()`，這條路徑會一併免疫**，
+不需要額外處理。
+
+**修法評估**：待辦 1（`computeRange()` 開頭對空陣列提前返回）是唯一必要的修法，
+且能同時涵蓋證據 1 與證據 4 兩條路徑。待辦 2（在 `chat.js:632` 加 `messages.length > 0`
+判斷）只擋得住其中一條，**不建議單獨採用**；若要做，就當成額外的防禦深度。
+
+- [x] ~~**待辦 1**（根本修法，優先）：`computeRange()` 函式開頭加上對 `items.length === 0` 的
+  提前返回~~ → **已完成**，回傳 `{ start: 0, end: -1, offsetTop: 0 }`。
+- [x] ~~**待辦 2**（輔助修法，選擇性）：`chat.js:632` 那行無條件呼叫的 `renderMessages()`
+  改成只在 `messages.length > 0` 時才呼叫。~~ → **決定不做**（原本寫「建議兩個都做」，
+  調查後改變判斷）：待辦 1 已同時涵蓋證據 1 與證據 4 兩條路徑，再加這道判斷等於把
+  「空陣列是特殊情況」的知識重複到第二個地方，違反 DRY／KISS，且會讓通用模組的邊界
+  責任變得模糊。`chat.js:632` 維持無條件呼叫。
+- [ ] **待辦 3**：修完後需要重新製造一次「聊天室建立逾時」的情境（例如暫時關掉
+  chat-service 或讓 ai-service/Qdrant 斷線）驗證：畫面正確顯示「聊天室建立失敗，請重新
+  整理頁面再試」文字、Console 不再出現這個 TypeError。
+  **注意（依證據 2 調整）**：錯誤文字在修復前就已經會顯示，所以它**不能**當成修好了的判準。
+  唯一有效的判準是 **Console 不再出現該 TypeError**。
+  另外，逾時情境要等滿 120 秒（`chat.js:226` `maxAttempts = 120`，每次間隔 1 秒），
+  想快一點可以改用「直接關掉 chat-service」——`pollForConversation` 的 `catch`
+  （`chat.js:268-271`）會立刻 `return null`，同樣走到空陣列路徑，不必等兩分鐘。
+- [ ] **待辦 4**（新增）：修完 `computeRange()` 後，順手用調查時的重現腳本再跑一次確認
+  空陣列不再拋例外（腳本邏輯見證據 1，用最小 DOM stub 直接 import 真模組，
+  不需要啟動任何服務，秒級可驗）。
+
+---
+
+## Bug 4：Qdrant 中斷後，ai-service 必須整套重啟才恢復
+
+> **標題已依調查修正**。原標題「ai-service 與 Qdrant 斷線後無法自動重連」帶有錯誤的因果暗示
+> ——證據 1 已證明連線層本來就會自動重連。現在的標題只描述觀察到的現象。
+
+> ### ✅ 已修復（2026-07-26，A + B + C + D 全做）
+>
+> 修復前先逐條核對原始碼，四項證據描述與現況**完全一致**（`app.py:33-51`、`app.py:89-96`、
+> `vector_store.py:233-248` 零呼叫、`start-all-services.bat:62` 的 `--rm`）。
+>
+> **A｜collection 於執行期自動補建**（核心）
+> `src/rag/vector_store.py` 新增模組常數 `EMBEDDING_VECTOR_SIZE = 768` 與
+> `REQUIRED_COLLECTIONS`（characters/fewshots/summaries），以及兩個冪等函式：
+>
+> ```python
+> def ensure_collection(self, collection_name: str) -> None:
+>     if not self.create_collection(collection_name, vector_size=EMBEDDING_VECTOR_SIZE):
+>         raise Exception(
+>             f"Qdrant collection '{collection_name}' is unavailable and could not be created"
+>         )
+>
+> def ensure_collections(self) -> None:
+>     for collection_name in REQUIRED_COLLECTIONS:
+>         self.ensure_collection(collection_name)
+> ```
+>
+> 呼叫點共 6 處。`vector_store` 內 3 處（涵蓋所有走封裝層的存取）：`upsert_documents()`、
+> `search()`、`delete_points()` 開頭各 ensure 一次。`rag_repository` 內 3 處——這三個方法
+> **繞過封裝層直接用 `vector_store.client`**，不補會在 collection 缺失時吃 404：
+> `replace_protagonist_background()`（filter 刪除）、`get_latest_summary()`（scroll）、
+> `delete_conversation_data()`（三個 delete，用 `ensure_collections()`）。
+> `get_conversation_data()` 原本就把例外吞成空結果，不需要處理。
+>
+> **只 ensure 寫入路徑是不夠的**（這點差一步就漏掉）：`summaries` 只有在存摘要時才會被寫，
+> 一個全新的 Qdrant 上，「初始化聊天室」只會補建 characters 與 fewshots，接著第一次生成回應
+> 就會在 `search_summaries()`／`get_latest_summary()` 撞上缺失的 `summaries` 而崩掉。
+> 所以讀取路徑也必須 ensure。
+>
+> **訊息刻意含 "Qdrant" 字樣**：`rag_controller._raise_for_error()` 是用關鍵字
+> （`"qdrant"`/`"connect"`/`"refused"`）查表決定回 503 還是 500。若沿用
+> `create_collection()` 那句泛用的失敗訊息，Qdrant 掛掉時會被誤判成 500，
+> 破壞既有規格〈清理聊天室 RAG 資料〉的 503 情境。原始錯誤原因仍由
+> `create_collection()` 的 `✗ Failed to create collection: ...` 日誌保留（實測有印出）。
+>
+> **B｜`/health` 接上既有的健康檢查鏈**
+> `app.py:89-96` 改為呼叫 `rag_service.check_rag_health()` → `vector_store.check_connection()`
+> ——這條鏈本來就寫好了，只是**兩層包裝都零呼叫點**，本次把它接起來，死代碼變成活代碼。
+> 可達回 200 `{status:"ok", ..., dependencies:{qdrant:{status:"ok"}}}`；
+> 不可達回 **503** `{status:"degraded", ..., dependencies:{qdrant:{status:"error", message}}}`。
+> 刻意用 `JSONResponse` 而非 `HTTPException`：健康檢查回報的是「狀態」不是「錯誤」，
+> 不該被全域 handler 轉成 `{error, message}` 而丟失結構。
+> 只探測 Qdrant，不探測 Ollama（範圍刻意限縮於 RAG 依賴，已寫進規格）。
+>
+> **D｜startup 維持不 crash，但補上「吞得起」的理由**
+> `app.py` 的 startup 改成呼叫 `ensure_collections()`（三段重複的 `create_collection` +
+> `raise` 收斂成一行，768 這個魔術數字也不再散落三處），`except` 仍只印日誌不 raise，
+> 並加註為什麼吞得起：有 A 就會在執行期補建、有 B 就看得見。多印一行提示現況。
+>
+> **C｜啟動腳本拿掉 `--rm`**
+> 改為 `--restart unless-stopped`，並且**必須先試 `docker start`**——這是拿掉 `--rm` 後
+> 新出現的情況：容器停止後會留在清單裡，直接 `docker run --name qdrant` 會撞名失敗。
+>
+> ⚠️ **起 Qdrant 的腳本有兩支，兩支都要改**：`start-all-services.bat:57-79` 與
+> `start-backend-services.bat:57-80`（後者是前者那段的完整複本）。第一次修的時候只改了
+> 前者，漏掉後者，等於只要改用 backend 那支腳本、`--rm` 陷阱就原封不動回來；
+> 使用者問「啟動 Qdrant 寫在哪支腳本」時 grep 全平台才發現，已補齊。
+> 兩處區塊現在逐字相同，並各自加了 `Keep this block in sync` 註記。
+>
+> ```bat
+> docker start qdrant >nul 2>&1
+> if errorlevel 1 (
+>     docker run -d --name qdrant --restart unless-stopped -p 6333:6333 -p 6334:6334 -v qdrant_storage:/qdrant/storage qdrant/qdrant
+> )
+> ```
+>
+> **規格已先行更新**（SOP 貫穿原則 #6，先改規格才動碼）：
+> `ai-service/openspec/specs/ai-generation/spec.md` 新增〈健康檢查〉與
+> 〈Collection 於執行期自動補建〉兩個 Requirement（共 8 個 Scenario），改寫
+> 〈服務啟動初始化〉並新增「啟動時 Qdrant 不可用」Scenario，同步更新架構圖。
+> `openspec validate --all` 3/3 全綠。
+>
+> **驗證狀態**（都用實機跑，不是讀過就算；全程用 port 6399 的拋棄式容器，
+> 沒有碰使用者的 Qdrant，測完已清除，`qdrant_storage` 資料卷完好）：
+> - ✅ 四個 Python 檔 `py_compile` 通過
+> - ✅ **A 方案 11/11**：ensure 建立（768 維）／重複 ensure 不清空既有資料／
+>   對不存在的集合 upsert、search、delete_points 皆自動補建（search 回空陣列而非拋錯）／
+>   `ensure_collections()` 補齊三個／Qdrant 不可用時拋錯且訊息實測可被
+>   `_raise_for_error()` 判為 **503**／repository 三條繞過封裝的路徑全過／正常路徑未退化
+> - ✅ **B + D + 完整恢復情境 10/10**：用 FastAPI TestClient 跑**真實的 `app.py`**——
+>   Qdrant 停著啟動服務 → 不 crash（D）→ `/health` 回 **503 degraded** 並指出是 qdrant 壞了（B）
+>   → `docker start` 把 Qdrant 拉回來（C：沒有 `--rm` 的容器可以原樣復活）→
+>   **全程不重啟 ai-service**，`/health` 自動恢復 200 ok → RAG 寫入自動補建 collection
+>   並成功寫入 2 筆（A）。**這就是待辦 6 要求的驗證情境**
+> - ✅ **C 的批次語法**：把修改後的 Qdrant 區塊逐字同構複製成測試 bat 實跑兩次——
+>   第 1 次走 `docker run`，`docker stop` 後容器**仍留在清單裡**（證明 `--rm` 確實沒了），
+>   第 2 次走 `docker start` 原樣復活、無撞名。`docker inspect` 確認
+>   `AutoRemove: false`、`RestartPolicy: unless-stopped`、port 對應與資料卷都在
+> - ✅ 三支啟動腳本（`start-all-services` / `start-backend-services` / `start-frontend-services`）
+>   全檔 0 個非 ASCII 位元組（新增的註解是英文，不會在 cmd.exe 的 ANSI 代碼頁下變成亂碼
+>   指令——實測過中文註解確實會炸）
+> - ⏳ **尚未經真人實測**：上述都是 TestClient + 拋棄式容器，還沒走過
+>   「真實 uvicorn + 真實 6333 + 瀏覽器聊天」。見待辦 6。
+>
+> **一項與本次修復無關、但務必知道的現場狀況**：使用者機器上**目前正在跑的 Qdrant 容器
+> （若有）仍是舊的 `--rm` 容器**，改 bat 不會追溯改變它。要讓新設定生效，得先
+> `docker rm -f qdrant` 再跑一次 `start-all-services.bat`（`qdrant_storage` 資料卷不受影響，
+> RAG 資料不會掉）。在那之前，交接說明的「陷阱 3」仍然成立。
+
+- **服務**：`ai-service`（後端）；另涉及部署腳本
+- **檔案**：`ai-service/app.py:33-51`（startup 建 collection 並吞例外）、
+  `ai-service/app.py:89-96`（`/health` 不檢查 Qdrant）、
+  `ai-service/src/rag/vector_store.py:233-248`（`check_connection()` 零呼叫點）、
+  `start-all-services.bat:62` **與 `start-backend-services.bat:62`**（Qdrant 容器 `--rm`；
+  兩支腳本的 Qdrant 區塊是複製貼上的同一段，行號為修復前的值）
+- **嚴重度**：中高——不會每次都發生，但一旦 Qdrant 在 ai-service 啟動時不可用，
+  服務會**安靜地**進入「自稱健康、實則 RAG 全掛」的狀態，且無法自行恢復
+- **現象**：手動重啟 Qdrant docker 容器後，`ai-service` 仍持續回報
+  `[WinError 10061] 無法連線，因為目標電腦拒絕連線`／`Failed to create collection: characters`，
+  必須把所有服務（含 Docker）全部關閉、用 `start-all-services.bat` 從頭啟動一次讓它自動拉起
+  Qdrant，聊天功能才恢復正常。
+- **~~推測根因~~**：~~`qdrant-client`／`httpx` 的連線池可能快取了失效連線~~
+  → **已用實機實驗推翻，見下方調查報告。**
+
+### 🔍 調查報告（2026-07-26）
+
+**結論：原本的「連線池快取失效連線」推測【不成立】，已用實驗證偽。真正的根因是三件事疊加，
+而且沒有一件跟連線韌性有關。**
+
+**證據 1｜實機實驗：直接證偽「連線池快取失效連線」**
+
+為了不動到正在跑的環境，另外起一個拋棄式 Qdrant 容器（port 6399），在 ai-service 的
+conda env 裡用**與 `vector_store.py:18-21` 完全相同的方式**建立一個長生命週期
+`QdrantClient`，然後停掉容器、再啟動，全程沿用**同一個 client 物件**：
+
+```
+① 啟動拋棄式 Qdrant（port 6399）... 已就緒
+② 建立長生命週期 client，第一次呼叫：
+   呼叫#1: ✅ 成功 -> collections=[]
+③ 停掉 Qdrant 容器後，用【同一個 client】呼叫：
+   呼叫#2: ❌ 失敗
+      例外型別: qdrant_client.http.exceptions.ResponseHandlingException
+      訊息    : [WinError 10061] 無法連線，因為目標電腦拒絕連線。
+④ 重新啟動 Qdrant 容器後，用【同一個 client】呼叫（關鍵步驟）：
+   呼叫#3: ✅ 成功 -> collections=[]
+
+結論：同一個 client 在 Qdrant 回來後【自動恢復】。
+      => 『連線池快取失效連線』的推測不成立。
+```
+
+環境：`qdrant-client 1.18.0`、`httpx 0.28.1`（conda env `ai-service` 實際安裝版本）。
+
+同時注意步驟③重現出了與測試時完全相同的錯誤訊息 `[WinError 10061] 無法連線，因為目標電腦
+拒絕連線`。這個錯誤是 TCP 層的 **ECONNREFUSED**，語意是「對這個位址發起新連線、但沒有東西
+在聽」——它只會在**真的沒人在 6333 監聽**時出現。快取的失效連線會產生別種錯誤
+（連線被重置／伺服器未回應之類），不會是 10061。也就是說，**測試時看到 10061 就代表當下
+Qdrant 確實不在監聽**，而不是連線池的問題。
+
+**證據 2｜原始碼確認：確實沒有任何 retry／reconnect（原待辦 1 的答案）**
+
+- `ai-service/src/rag/vector_store.py:262` 是 `vector_store = QdrantVectorStore()`，
+  module 層級全域單例；`:18-21` 在 `__init__` 建立 `QdrantClient(url=..., api_key=...)`，
+  **沒有傳 `timeout`，也沒有任何重試參數**，整個 process 生命週期只建一次。
+- 往下追 `qdrant-client 1.18.0` 的實作
+  （`site-packages/qdrant_client/http/api_client.py:71, 129-136`）：
+  `self._client = Client(**kwargs)` 是一個長生命週期 `httpx.Client`；
+  發送路徑 `send_inner()` 只是 `self._client.send(request)` 包一層 try/except 轉例外，
+  **完全沒有重試邏輯**（只有 429 有特別處理，而且也只是換個例外拋出）。
+
+所以「沒有 retry 機制」這個觀察是**正確的**。但證據 1 證明：因為 httpx 的連線池本來就會
+淘汰失效連線、自動開新連線，**沒有 retry 不等於無法恢復**。原推測把這兩件事混為一談了。
+
+**證據 3｜真正的根因（一）：collection 只在服務啟動時建立一次，失敗還被吞掉**
+
+grep 全 `ai-service` 的 `create_collection` 呼叫點，**live 的只有 `app.py:40, 43, 46` 三行，
+全部位於 `@app.on_event("startup")` 內**：
+
+```python
+# app.py:33-51
+@app.on_event("startup")
+async def startup_event():
+    try:
+        if not vector_store.create_collection(config.CHARACTER_COLLECTION, vector_size=768):
+            raise Exception(f"Failed to create collection: {config.CHARACTER_COLLECTION}")
+        ...
+    except Exception as e:
+        print(f"❌ [app.py] RAG 集合初始化失敗: {e}")   # ← 只印出來，然後就繼續啟動
+```
+
+（`src/repositories/rag_repository.py:69-71` 也有一個 `create_collection`，但 grep 確認
+**零呼叫點，是死代碼**，不構成第二條建立路徑。）
+
+這條證據非常關鍵，它直接解釋了測試時看到的現象：
+
+1. 錯誤訊息 `Failed to create collection: characters` 字面上就來自 `app.py:41`，
+   **只可能在服務啟動時印出**，不可能是執行期反覆重試在噴。
+2. `except` 只 `print` 不 `raise`，所以 **Qdrant 掛掉時 ai-service 照樣啟動成功**，
+   只是三個 collection 一個都沒建起來，而且**執行期永遠不會再補建**。
+3. 因此「重啟 Qdrant 但不重啟 ai-service」對 collection 缺失的狀態毫無幫助——
+   不是因為連不上，而是因為**根本沒有任何程式碼會再去建它**。
+
+**證據 4｜真正的根因（二）：`/health` 完全不檢查 Qdrant，健康狀態是假的**
+
+```python
+# app.py:89-96
+@app.get("/health")
+async def health_check():
+    return {"status": "ok", "service": "ai-service", ...}   # 純字典，沒碰 Qdrant
+```
+
+`vector_store.py:233-248` 明明有寫好的 `check_connection()`。grep 全服務後，它的參照鏈是：
+
+```
+vector_store.check_connection()          # :233  實作
+  ↑ rag_repository.check_connection()    # :58   薄包裝 → 0 個呼叫點（死代碼）
+  ↑ rag_service.check_rag_health()       # :21   薄包裝 → 0 個呼叫點（死代碼）
+```
+
+也就是說：**函式本身有被兩個包裝函式參照，但那兩個包裝函式都沒有任何人呼叫**，
+整條鏈從未被執行。所以 ai-service 在「collection 全缺、RAG 完全不能用」的狀態下，
+`/health` 依然回 `{"status":"ok"}`。`start-all-services.bat` 與任何監控都因此看不出異常
+——這正是為什麼問題只能靠使用者聊天失敗才被發現。
+
+**附帶查到的文件與實作落差**：`rag_service.py:44-46, 57-58` 的 docstring 明寫初始化流程是
+「1. 【新增】檢查 RAG 資料庫連接（同步，立即）／2. 如果不可用，立即返回 failed（HTTP 503）」，
+但 `initialize_conversation()` 的實際實作（`:60-84`）**直接標記 pending 並啟動背景線程，
+沒有做任何連線檢查**。文件描述的 fail-fast 行為並不存在。這解釋了 `check_rag_health()`
+為何是死代碼——它應該是在這裡被呼叫的，但呼叫點後來消失了（或從未寫進去）。
+**這是本次調查順帶發現、與原 bug 相關但獨立的問題，尚未評估影響範圍，先記錄。**
+
+**證據 5｜真正的根因（三）：Qdrant 容器用 `--rm` 啟動，「手動重啟」在技術上做不到**
+
+`start-all-services.bat:62`：
+
+```bat
+docker run -d --rm --name qdrant -p 6333:6333 -p 6334:6334 -v qdrant_storage:/qdrant/storage qdrant/qdrant
+```
+
+`docker inspect qdrant` 實測目前正在跑的容器：
+
+```
+AutoRemove(--rm): true
+RestartPolicy   : no
+Mounts          : volume:qdrant_storage -> /qdrant/storage
+```
+
+`--rm` 代表**容器一停止就會被 Docker 自動刪除**。所以：
+
+- `docker stop qdrant` 之後，容器已經不存在，`docker start qdrant` 必定失敗
+  （`No such container: qdrant`）——「手動重啟容器」這個動作**做不到**。
+- `RestartPolicy: no` 代表 Docker 也不會自己把它拉回來。
+- 要讓它回來只能重新 `docker run` 完整那一長串（**尤其 `-v qdrant_storage:/qdrant/storage`
+  不能漏**，漏了就是一個空的資料庫，既有 RAG 資料全部讀不到）。
+
+這完整解釋了「必須用 `start-all-services.bat` 從頭啟動才恢復」：那個 bat 的價值**不是**
+重建連線，而是（a）它的 `curl` 探測發現 6333 沒回應，於是**用正確的完整參數重新 `docker run`**
+把 Qdrant 真的拉回來；（b）它接著才啟動 ai-service（`:92`，在 Qdrant 的 `:62` 之後），
+於是 `startup_event` 重跑一次、**把 collection 重新建起來**。兩件事都不是 ai-service
+的連線層在起作用。
+
+**證據 6｜使用者補述的實際操作路徑，直接解釋了 10061（原「尚未證實」欄已結案）**
+
+使用者說明當時的操作**全程是在 Docker Desktop 圖形介面完成的**，不是下指令：
+
+1. 到 **Containers** 頁把 qdrant 容器關掉 → 容器隨即從清單中消失
+   （與證據 5 的 `AutoRemove: true` 完全吻合，`--rm` 讓它一停止就被刪除）。
+2. 因為容器已經不在了，只好改到 **Images** 頁找到 `qdrant/qdrant` 這個 image，
+   從那裡按 ▶ 把它啟動。
+
+關鍵就在第 2 步：**從 Images 頁啟動，開出來的是一個全新的容器，套用的是預設值**——
+除非展開 "Optional settings" 手動填，否則**沒有 `-p 6333:6333` 的 port 對應，
+也沒有 `-v qdrant_storage:/qdrant/storage` 的資料卷**。
+
+所以容器雖然在跑，它的 6333 卻沒有對應到 host 的 6333，`localhost:6333` **真的沒有東西在聽**。
+ai-service 回報的 `[WinError 10061] 目標電腦拒絕連線` 是**字面意義上正確**的 ECONNREFUSED，
+與證據 1 實驗步驟③重現出的錯誤是同一回事。
+
+**結論：ai-service「認不到 Qdrant」不是因為它認不出來，是因為回來的根本不是原本那個容器。**
+另外要提醒：就算之後補上了 port 對應，只要漏了 `-v qdrant_storage:...`，
+拿到的也會是一個空資料庫，既有的 RAG 資料全部讀不到。
+
+**證據 7｜⚠️ 溯源：這三項根因都【不是】任何一輪優化引入的**
+
+使用者提到「優化工程之前並不會發生這樣的事情」。查 `ai-service` 的 git 歷史（它有獨立 repo）
+逐 commit 比對後，這個印象**不能歸咎於優化**：
+
+| 根因 | 最早出現 | 是否為優化引入 |
+|------|---------|---------------|
+| `startup_event` 吞掉 collection 建立失敗（證據 3） | `c3cdd47` **2026-06-26**（專案第一個 commit） | ❌ 否，從第一天就在 |
+| `/health` 從不檢查 Qdrant（證據 4） | `c3cdd47` **2026-06-26**（同上，逐 commit 檢查皆為 0） | ❌ 否，從第一天就在 |
+| 執行期沒有補建 collection 的路徑 | `src/rag/data_loader.py` 曾有 4 處呼叫，於 `74685a7` **2026-07-03** 隨該檔一起消失 | ❌ 否，比優化早三週 |
+
+另外把優化區間（`2a2a43f` 2026-07-14 → HEAD，涵蓋**後端優化** `simplify-ai-service`
+與**微服務互連優化** T16 兩輪）的 diff 整份拉出來逐項比對：
+
+**（a）Qdrant 相關檔案完全沒被動過**
+
+```
+$ git diff --stat 2a2a43f HEAD -- src/rag/ src/repositories/
+ src/repositories/conversation_repository.py | 20 --------------------
+```
+
+握有 Qdrant 連線與 collection 邏輯的兩個檔案——`src/rag/vector_store.py` 與
+`src/repositories/rag_repository.py`——**一行都沒改**。唯一的異動是刪掉
+`conversation_repository.py`（無關的死代碼）。
+
+**（b）`app.py` 的兩個關鍵函式沒被動過**
+
+`app.py` 的改動只有四處：新增 `HTTPException` handler、`CORS allow_origins` 改讀 config、
+`root()` 端點清單更新、移除 `reply_controller`。
+**`startup_event` 與 `health_check` 這兩個函式的內容一行都沒動過。**
+
+**（c）唯一「看起來有關」的改動，實際上是刪除已停用的死註解**
+
+後端優化那輪確實從 `rag_service.py` 的 `initialize_conversation()` 刪掉了一段健康檢查
+程式碼（CLAUDE.md 記為「移除實驗性註解死碼」）。但逐版本追查後確認，**它從進 repo 的
+第一天起就是被註解掉的**：
+
+| commit | 日期 | `initialize_conversation()` 內的健康檢查 |
+|---|---|---|
+| `c3cdd47` | 2026-06-26 | 🔴 完全不存在 |
+| `c9a00fd` | 2026-06-29 | 🔴 完全不存在 |
+| `989e193` | 2026-07-01 | 🔴 完全不存在 |
+| `74685a7` | 2026-07-03 | 🟡 **加進來時就已被註解停用** |
+| `3d82544` | 2026-07-08 | 🟡 已被註解停用 |
+| `d58a34c` | 2026-07-09 | 🟡 已被註解停用 |
+| `2a2a43f` | 2026-07-14 | 🟡 已被註解停用 |
+| `4b8d7f3` | 2026-07-25 | 🔴 註解文字被刪除（**後端優化**） |
+| `9272cb5` | 2026-07-26 | 🔴 完全不存在 |
+
+被註解的那段自己寫著原因：
+`# 🆕 【實驗性註解】暫時停用健檢觸發，觀察無健檢時錯誤是否仍能正確傳播`。
+
+也就是說，**這個 fail-fast 健康檢查在專案歷史上從來沒有生效過任何一天**。
+後端優化刪掉的是一段早已失效的註解文字，**行為零改變**。
+
+**（d）優化唯一該負的責任（很小，且不是 Bug 4 的成因）**
+
+刪掉那段註解後，`initialize_conversation()` 的 docstring 仍寫著
+「1. 檢查 RAG 資料庫連接（同步，立即）／2. 不可用就回 failed（503）」，
+而唯一能解釋「為什麼沒做」的線索（那段自帶原因的註解）不見了。
+文件與實作不符的狀況**在優化之前就已存在**（註解期間就對不上），優化只是讓它**更難被發現**。
+這是真的、但很小的一筆帳，且與 Bug 4 的三項根因無關。
+
+**證據 8｜⚠️ 更正證據 7：觸發條件確實是「佈署優化」引入的（`--rm`）**
+
+> **這裡先記一筆調查失誤。** 證據 7 原本寫「`start-all-services.bat` 的 `--rm` 也不是優化
+> 引入，因為該檔第一個 commit 就有這行」。這個推論**方法上是錯的**：那個檔案本身就是佈署
+> 優化的產物，「它從第一版就有 `--rm`」當然成立，卻完全沒有回答真正該問的問題——
+> **在這個檔案存在之前，Qdrant 是怎麼被啟動的？** 使用者指出「之前這樣測過不會有問題」
+> 之後才回頭補查，結論反轉。
+
+**（a）佈署優化之前，官方文件教的啟動方式沒有 `--rm`**
+
+`ai-service/RAG_SETUP.md` 從優化前（`2a2a43f`）到現在，記載的啟動指令一字未改：
+
+```bash
+docker run -p 6333:6333 -p 6334:6334 \
+  -v qdrant_storage:/qdrant/storage \
+  qdrant/qdrant
+```
+
+**沒有 `--rm`、沒有 `--name`。** 這樣起的容器停掉之後**會留在 Containers 清單裡**，
+`docker start`（或 Docker Desktop UI 的 ▶）會把**同一個容器**原樣復活，
+port 對應與資料卷全都還在——ai-service 隨即自動重連（證據 1 已實驗證明連線層本來就會恢復）。
+**這正是使用者記憶中「以前這樣測不會有問題」的狀態。**
+
+**（b）`start-all-services.bat` 是佈署優化新建的檔案，且一建立就帶 `--rm`**
+
+```
+$ git show 4d1a704 -- start-all-services.bat
+new file mode 100644                    ← 新檔案，不是修改
++docker run -d --rm --name qdrant -p 6333:6333 -p 6334:6334 -v qdrant_storage:/qdrant/storage qdrant/qdrant
+```
+
+`4d1a704`（**2026-07-23**）正是同源部署／Caddy 那一輪的 commit，標題與內文寫得很清楚：
+
+> `Start Caddy from the .bat scripts; the old flow no longer works`
+> 「Since the same-origin migration the frontends call the API with relative paths,
+> so opening a Vite port directly is broken」
+
+也就是說，這一輪**同時做了兩件事**：把 Qdrant 改成 `--rm` 的拋棄式容器，
+並且讓「不透過這支 bat 的舊啟動方式」失效，等於強制所有人改走這條新路徑。
+
+**（c）因果鏈**
+
+| 層次 | 內容 | 來自 |
+|---|---|---|
+| **觸發條件** | Qdrant 容器加上 `--rm` → 一停止就被刪除 → 使用者只能從 Images 頁重開 → 得到一個**沒有 port 對應、沒有資料卷**的全新容器 → `localhost:6333` 真的沒人在聽 | **佈署優化**，`4d1a704`，2026-07-23 |
+| **放大器** | collection 只在 startup 建、失敗被吞、`/health` 說謊 → 即使把 Qdrant 正確拉回來，ai-service 也不會自己補建 collection，必須整套重啟 | **專案第一天就有**（2026-06-26 / 07-03），非任何優化引入 |
+
+**兩者缺一，這個 bug 都不會以「必須整套重啟」的形式出現**：
+- 沒有 `--rm`（優化前）→ stop/start 同一個容器，一切照舊，三項缺陷永遠潛伏不發作。
+- 沒有那三項缺陷 → 就算容器被刪、重建正確的新容器後，ai-service 也能自己恢復。
+
+**所以「是哪一輪造成的」的答案是：佈署優化（2026-07-23）改變了 Qdrant 容器的生命週期，
+把一個潛伏兩個月的缺陷推到了檯面上。** 後端優化（`simplify-ai-service`）與微服務互連優化
+（T16）皆已逐項排除，見證據 7 的 (a)(b)(c)(d)。
+
+**修法對照**：這也證實了待辦 5（拿掉 `--rm`）不是「順手改善」，而是**直接回復到出問題前的
+狀態**，應該優先做；待辦 2/3/4（ai-service 那三項）則是把潛伏了兩個月的缺陷一併補掉。
+
+**修法評估（依證據重寫，取代原待辦 2）**
+
+原待辦 2 想做的「每次請求檢查連線健康度並視需要重建 client」「加 retry with backoff」
+**方向是錯的**——證據 1 已證明 client 本來就會自己恢復，做這些不會解決任何實際問題。
+依證據，真正該做的是：
+
+1. **讓 collection 的建立不再只發生在啟動時**，或至少在 RAG 操作前確保它存在
+   （證據 3）。這是最核心的一項。
+2. **`startup_event` 不要吞例外**：Qdrant 不可用時要嘛讓服務啟動失敗、要嘛明確標記為
+   unhealthy，不要假裝啟動成功（證據 3）。
+3. **`/health` 接上已經寫好但沒人用的 `check_connection()`**，讓健康狀態反映真實情況
+   （證據 4）。
+4. **檢討 `start-all-services.bat:62` 的 `--rm`**：改成不加 `--rm`（容器可 `docker start`
+   重啟）或加 `--restart unless-stopped`，讓「重啟 Qdrant」成為一個做得到的動作
+   （證據 5）。
+
+- [x] ~~**待辦 1**：讀 `ai-service` 裡建立 Qdrant client 的程式碼，確認連線是否為啟動時
+  建立一次就不再重建、有無 retry/reconnect 機制。~~
+  → **調查完成（證據 2）**：是啟動時建立一次的全域單例，且確實沒有任何 retry／reconnect。
+  但**這不是本問題的根因**——證據 1 證明沒有 retry 也能自動恢復。
+- [x] ~~**待辦 2**（依調查重寫）：修 collection 建立時機——不要只在 `app.py` 的 `startup_event`
+  建一次。~~ → **已完成（A 方案）**：新增冪等的 `ensure_collection()`/`ensure_collections()`，
+  6 個呼叫點涵蓋所有讀寫路徑（含 `rag_repository` 三處繞過封裝層的直接 client 操作）。
+- [x] ~~**待辦 3**（依調查重寫）：`app.py:50-51` 不要吞掉 startup 失敗。~~
+  → **決定不做，採 D 方案（維持不 crash）**，由使用者拍板。理由：讓服務啟動依賴 Qdrant
+  就緒會違反 12-Factor IX Disposability（`start-all-services.bat` 只 `timeout 3` 就啟動
+  ai-service，Qdrant 慢一點整個服務就起不來，且沒有自動重啟機制）。改成吞得起——
+  有待辦 2 會在執行期補建、有待辦 4 讓狀態看得見，吞例外不再是永久傷害。
+- [x] ~~**待辦 4**（依調查新增）：`app.py:89-96` 的 `/health` 接上既有的健康檢查
+  （`rag_service.check_rag_health()` → `vector_store.check_connection()`，整條鏈已寫好但
+  從未被呼叫，見證據 4）。順便決定 `rag_service.py:44-46` docstring 承諾但未實作的
+  「初始化前同步檢查連線、不可用就回 failed」要補上還是把 docstring 改掉。~~
+  → **已完成（B 方案）**：整條鏈接上，Qdrant 不可達回 503 `degraded`。
+  docstring 落差**選擇改 docstring、不補實作**——補 fail-fast 會與 D 方案的方向打架
+  （一個說「依賴沒好就別動」，一個說「依賴沒好也要能起來、之後自己恢復」）。
+  已改寫 `initialize_conversation()` 的 docstring 為與實作一致，並註明即時健康狀態
+  改看 `GET /health`。
+- [x] ~~**待辦 5**（依調查新增，**依證據 6 提高優先度**）：`start-all-services.bat:62` 的 Qdrant
+  容器移除 `--rm` 或改用 `--restart unless-stopped`，讓容器可以被單獨重啟。~~
+  → **已完成（C 方案）**：`--rm` 移除、改 `--restart unless-stopped`，並改成先試
+  `docker start`、失敗才 `docker run`（拿掉 `--rm` 之後容器會留在清單裡，直接 `docker run`
+  同名會失敗——這是新出現的情況，已實跑兩次驗證）。
+  ⚠️ **改的是兩支腳本**：`start-all-services.bat:57-79` 與 `start-backend-services.bat:57-80`。
+  第一次只修了前者，漏掉後者（見「已修復」區塊 C 段的說明），已補齊。
+  ⚠️ **這不會追溯改變機器上已經在跑的舊 `--rm` 容器**，見上方「已修復」區塊最後一段。
+- [x] ~~**待辦 7**（依證據 6 新增，**在修好待辦 5 之前的臨時作法**）：不要從 Docker Desktop 的
+  Images 頁啟動 Qdrant。容器不見了就直接重跑一次 `start-all-services.bat`
+  （它的 `curl` 探測會發現 6333 沒回應，並用完整正確的參數重新 `docker run`），
+  或手動下完整指令：
+  ```
+  docker run -d --rm --name qdrant -p 6333:6333 -p 6334:6334 -v qdrant_storage:/qdrant/storage qdrant/qdrant
+  ```
+  **`-v qdrant_storage:/qdrant/storage` 絕對不能漏**，漏了會得到一個空資料庫，
+  既有 RAG 資料全部讀不到。且拉起 Qdrant 後仍須重啟 ai-service 一次（證據 3：
+  collection 只在 startup 建立）。
+  → **待辦 5 修好後這條臨時作法已不需要**。修好之後：容器 stop 不會消失，`docker start`
+  或 Docker Desktop Containers 頁的 ▶ 都能原樣復活；且**不必再重啟 ai-service**
+  （collection 會在執行期補建）。仍然要記得：**不要從 Images 頁啟動**，那永遠會產生一個
+  沒有 port 對應、沒有資料卷的新容器。
+- [ ] **待辦 6**：修完後重新測試。**驗證步驟依證據調整**：不要只做「重啟 Qdrant 看有沒有恢復」
+  （證據 1 已證明連線層本來就會恢復，這樣測會誤判成已修好）。要測的是
+  「**Qdrant 完全停掉的期間啟動 ai-service**」→ 確認 `/health` 回報不健康（不是 `ok`）→
+  再把 Qdrant 拉回來 → 確認 collection 有被補建、聊天功能自動恢復，**全程不重啟 ai-service**。
+  → **已用 FastAPI TestClient + 拋棄式容器把這整條情境跑通（10/10）**，見上方「已修復」的
+  驗證狀態。**剩下真人實測**：真實 uvicorn（`start-all-services.bat`）+ 真實 6333 +
+  瀏覽器實際聊天，確認 RAG 檢索與回應生成都正常。實測前建議先
+  `docker rm -f qdrant` 清掉舊的 `--rm` 容器，新的 bat 設定才會生效。
+
+---
+
+## 完成後的收尾動作
+
+- [ ] 四個 bug 全部修完並各自重新實測通過後，回到《前端網頁手動測試task.md》繼續未完成的
+      測試階段（第五階段剩餘部分 → 第六～八階段）。
+- [ ] 视情况評估是否需要把這些 bug 的修復記錄回對應服務的 `openspec/specs/*/spec.md`
+      與 `mistake.md`（依循先前 SOP 的「規格是單一真相」慣例）。
+- [ ] 把本輪調查修正掉的三項錯誤描述同步回《前端網頁手動測試task.md》文末「發現的新問題」
+      （該文件目前仍記載著舊版說法）：第 1 項要補上 `edit.js` 的兩處、第 4 項要拿掉
+      「蓋掉錯誤訊息」、第 3 項要拿掉「連線池快取失效連線」。
+
+---
+
+## 調查／修復中順帶發現（不在原本四個 bug 範圍內，未處理，僅記錄）
+
+依先前回饋，這裡一律平等列出，不自行判斷範圍或優先度。
+
+1. **`persona-nexus-character` 的正式建置漏掉兩個主頁面**
+   `vite.config.js` 沒有設定 `build.rollupOptions.input` 多頁入口，`npm run build` 只編譯
+   `index.html`（7 modules），**`creator-create.html` 與 `creator-edit.html` 這兩個真正的
+   主頁面完全沒有進 `dist/`**（實測 `ls dist/` 只有 `index.html` + assets）。
+   目前走 dev server + Caddy 所以沒被發現。兩個影響：（a）正式建置產物是不完整的；
+   （b）**`npm run build` 對這兩個檔案沒有任何驗證效力**，修改 `create.js`／`edit.js`
+   後不能拿 build 通過當成驗證。與《前端系統設計原則》C 節「建置產物精簡」相關但方向相反
+   ——這是該進去的東西沒進去。
+2. **`persona-nexus-lobby` 的 `message-utils.js` 有與 Bug 2 同型的結構問題**
+   在 `chat.html`／`character-edit.html` 這兩個不自帶 `#message-box` 的頁面上，
+   訊息框會被 `document.body.appendChild()` 成 body 級單例、不隨導頁清除，
+   且 `conversation-history.js:33` 的刪除失敗訊息未傳 `autoHideMs`。詳見 Bug 2 證據 5。
+   尚未實測觸發。已如實記入 `lobby-ui/spec.md` 的 as-is 規格。
+3. ~~**`ai-service` 的 `rag_service.py` docstring 與實作不符**~~
+   docstring 承諾初始化前會「同步檢查 RAG 資料庫連接、不可用就回 failed（503）」，
+   實作沒有做。詳見 Bug 4 證據 4。
+   → **已於 Bug 4 一併修掉**（使用者勾選）：改 docstring 使其與實作一致，不補 fail-fast 實作
+   （補了會與 D 方案的 Disposability 方向打架），並註明即時健康狀態改看 `GET /health`。
+4. **Caddy 容器也還是 `--rm`**（本次修 Bug 4 時順帶看到）
+   `start-all-services.bat:144` 與 `start-frontend-services.bat:38` 的 `nexus-caddy`，
+   與 Qdrant 修改前是同一個寫法，同樣會「一停就消失」。影響比 Qdrant 小——Caddy 沒有
+   資料卷，重建不會掉資料，重跑 bat 就會回來——所以**本次沒有動它**（使用者這次勾選的
+   範圍只有 Qdrant）。要不要一併改由使用者決定。
+6. **三支啟動腳本有大量重複區塊**（本次踩到才發現）
+   `start-all-services.bat` = `start-backend-services.bat` + `start-frontend-services.bat`
+   的內容複製貼上，Ollama/Qdrant/Caddy 三個區塊各存在兩份。這正是 C 方案第一次只修一半的
+   原因。要根本解決得把共用區塊抽成獨立的 `.bat` 由三支互相 `call`，屬結構調整，未做。
+5. **ai-service 的 `/health` 沒有逾時保護**（本次修 B 時確認）
+   `QdrantClient` 建立時沒傳 `timeout`（`vector_store.py:18-21`），所以若 Qdrant「連得上但
+   不回應」（而非拒絕連線），`/health` 會一直等。實務上不致命：唯一的呼叫端
+   `chat-service/src/lib/serviceClient.js:88` 自己設了 5 秒 timeout，逾時同樣被視為不健康。
+   另外本服務所有端點都是 `async def` 卻呼叫同步阻塞的 Qdrant/Ollama 程式碼，
+   這是既有的全服務性問題，**不在本次範圍**，未動。
+
+---
+
+## 調查方法備註（供日後重現）
+
+本輪四項調查用到的手法，記在這裡是因為它們不需要啟動整套服務就能驗證，日後排查同類問題可直接沿用：
+
+- **四個前端各自有獨立的巢狀 git repo**，平台根目錄的 `git` 看不到它們的改動。
+  要看前端的 diff 必須 `git -C persona-nexus-<name> diff`。這點在 Bug 1 一度讓
+  `git diff` 查無結果，容易誤判成「沒有改動」。
+- **URL 拼接問題**用 Node 的 `new URL(href, base)` 驗證即可——它就是瀏覽器用的
+  WHATWG URL 規則，比在瀏覽器裡手動點一次更快也更精確（Bug 1 證據 2）。
+- **前端純邏輯模組**（如 `virtualMessageList.js`）可以用最小 DOM stub 在 Node 裡直接
+  `import` 真檔案來跑，不需要 jsdom、不需要啟動 Vite，秒級就能拿到真實堆疊（Bug 3 證據 1）。
+- **要驗證某個外部依賴的行為**（如 qdrant-client 斷線後會不會自動恢復），開一個
+  **不同 port 的拋棄式容器**做對照實驗，不要動正在跑的環境（Bug 4 證據 1）。
+- **看到某條錯誤訊息，先 grep 它的字面來源**再推論。Bug 4 就是靠這招發現
+  `Failed to create collection` 只可能在 startup 印出，一舉推翻了「執行期反覆重試」的想像。
+- **「以前不會這樣」不能直接當成迴歸的證據，但也不能當成雜訊丟掉**。Bug 4 兩邊都踩到了：
+  逐 commit 比對確實排除了三項 ai-service 根因（早於各輪優化），但我一度因此整個否定
+  使用者的記憶，結果漏掉真正的觸發條件。判斷「是不是這輪弄壞的」要用
+  `git show <commit>:<file>` 逐版本比對，不要靠印象；同時**使用者說「以前不會」時，
+  要當成一條待查線索追到底**，而不是拿 git 證據把它否掉就算了。
+- **⚠️ 查「某個設定是不是這輪引入的」時，不能只看該檔案自己的 git 歷史。**
+  Bug 4 就是這樣查錯的：看到 `start-all-services.bat` 第一個 commit 就有 `--rm`，
+  便下結論「不是優化引入」——但**那個檔案本身就是該輪優化新建的產物**，
+  這個推論等於什麼都沒證明。正確問法是「**在這個檔案存在之前，這件事是怎麼做的？**」
+  （答案在 `ai-service/RAG_SETUP.md`：原本的指令沒有 `--rm`）。
+  遇到 `new file mode` 的 commit 尤其要警覺，一定要去別處找舊做法的痕跡（文件、README、
+  其他腳本）。
+- **問清楚使用者實際做了什麼操作**。Bug 4 卡在「手動重啟 Qdrant」這句話上很久，
+  直到問出是「從 Docker Desktop 的 Images 頁按 ▶」才真相大白——同樣一句「重啟容器」，
+  用指令做和用 UI 做，結果天差地遠。

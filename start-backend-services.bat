@@ -59,7 +59,26 @@ curl -s -o nul http://localhost:6333/
 if errorlevel 1 (
     echo   Qdrant not responding, starting container...
     REM Reuses the existing qdrant_storage volume so RAG data persists.
-    docker run -d --rm --name qdrant -p 6333:6333 -p 6334:6334 -v qdrant_storage:/qdrant/storage qdrant/qdrant
+    REM
+    REM Deliberately NO --rm: with it the container was deleted the moment it
+    REM stopped, so "restart Qdrant" was not actually a doable action - stopping
+    REM it from Docker Desktop's Containers tab made it vanish, and re-launching
+    REM from the Images tab gives a brand new container with default settings:
+    REM no -p 6333:6333 and no -v qdrant_storage, i.e. nothing listening on 6333
+    REM and an empty database. That is what made ai-service report
+    REM "[WinError 10061] connection refused" until everything was restarted.
+    REM
+    REM Without --rm the container survives `docker stop`, so `docker start`
+    REM (or the UI's play button) revives that same container with its port
+    REM mappings and volume intact. `docker run` therefore only needs to happen
+    REM the first time, or after an explicit `docker rm qdrant` - hence the
+    REM start-then-run fallback below. --restart unless-stopped additionally
+    REM brings it back when Docker Desktop starts, unless it was stopped by hand.
+    REM Keep this block in sync with start-all-services.bat.
+    docker start qdrant >nul 2>&1
+    if errorlevel 1 (
+        docker run -d --name qdrant --restart unless-stopped -p 6333:6333 -p 6334:6334 -v qdrant_storage:/qdrant/storage qdrant/qdrant
+    )
     timeout /t 3 /nobreak
 ) else (
     echo   Qdrant already running.
