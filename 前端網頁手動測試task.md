@@ -16,6 +16,42 @@
 
 ---
 
+## ✅ 測試已全部完成（2026-07-27）
+
+> 8 個階段全數測完，詳見文末「測試結果紀錄區」與「發現的新問題」（共 7 項，
+> 第 1～4 項已修復並驗證通過，第 5～7 項為本輪新發現、尚未修復）。以下交接說明僅供回溯查閱，
+> 不再是待辦事項。
+
+### 收尾動作提醒（若要繼續處理，供之後接手參考）
+
+- **新發現的 3 個問題（第 5～7 項）尚未修復**，皆已記錄現象、根因、與《前端系統設計原則》的對照，
+  是否修復、修法為何，留待使用者另開規劃決定：
+  - 第 5 項：重啟聊天室時「建立新聊天室」步驟逾時失敗，不會顯示 toast，卡在懸浮層
+    （`persona-nexus-chat/src/chat.js:599-603`）
+  - 第 6 項：編輯頁未帶 `?id=` 時靜默轉向回首頁，沒有錯誤提示
+    （`persona-nexus-lobby/src/main.js:68`）
+  - 第 7 項：角色卡「⋮」選單「編輯」選項無法用鍵盤 Enter/Space 觸發
+    （`persona-nexus-lobby/src/my-character.js:60-69`，同套寫法也在
+    `conversation-history.js:18-22`，未實測但判斷同樣有問題）
+- 暫緩的可及性細項（aria-label 等，3.3/5.4/5.5/7.2 各一兩項）維持暫緩，不用主動處理。
+
+### 環境現況提醒（接手時請自行重新確認，不保證仍然成立）
+
+- **chat-service 目前有兩個持久化開關被關閉**（`chat-service/src/config/config.json` 的
+  `persistence.enableCreationJobs`／`enableGenerationStatus` 皆為 `false`），這是測試時為了
+  「中途重啟服務不會卡住 job/生成鎖」而暫時設定的本機測試值，**不要 commit**。若测試涉及
+  「服務重啟後狀態是否正確存活」這類情境，記得先確認/改回 `true`（詳見
+  `chat-service/CLAUDE.md`「目前狀態」段落）。
+- 以下檔案目前是本機未 commit 的狀態：
+  - 根目錄：本文件、《前端網頁debug_task_checklist.md》
+  - `chat-service/`：`CLAUDE.md`、`openspec/specs/conversations/spec.md`、
+    `src/config/config.json`、`src/config/config.txt`、
+    `src/repositories/conversationRepository.js`、`src/services/conversationService.js`
+- 四個前端各自有獨立巢狀 git repo，`git diff` 在平台根目錄看不到它們的改動，要
+  `git -C persona-nexus-<name> diff`。
+
+---
+
 ## 前置作業
 
 - [ ] Docker Desktop 已啟動，`docker ps` 看得到 `qdrant`、`nexus-caddy` 兩個容器在跑
@@ -105,9 +141,8 @@
 - [x] 點「+ 新增角色」進入建立頁（iframe），表單正常渲染
 - [x] 必填欄位（名稱／簡介／背景／開場白）留空送出 → 原生 `required` 驗證擋下，不發請求
 - [x] 填完必填欄位送出 → Network 確認打 `POST /api/characters`（實測回應 `201 Created`）
-- [x] 成功 → 訊息框顯示成功訊息（含角色 ID）、表單清空；**已知 bug**：1.5 秒後的自動跳轉目前是
-      壞的（見文末「發現的新問題」第 1 項），手動導航到 `/my-characters` 後確認角色清單正確顯示
-      新建立的角色，代表建立本身成功、只有跳轉這段壞掉
+- [x] 成功 → 訊息框顯示成功訊息（含角色 ID）、表單清空；1.5 秒後自動跳轉至 `/my-characters`
+      並正確顯示新建立的角色（**2026-07-27 Bug 1 修復驗證通過**）
 - [x] 新增「Few-shot 對話範例」列（+ 新增對話按鈕）→ 動態新增一列輸入框，可各自刪除
 - [x] 「可見性」欄位（`visibility`）留空時，實際建立結果應為 `private`（預設值）
 - [x] 額外建一個「可見性」設為 public 的角色（後面測「首頁公開列表」跟「跨帳號聊天權限」會用到）
@@ -141,6 +176,8 @@
 ### 4.2 首頁
 - [x] 剛建立的 **public** 角色出現在首頁公開列表；private 角色**不會**出現
 - [x] 滑鼠 hover 卡片 → 顯示簡介 tooltip
+  - [x] 路徑 A：hover 卡片 → 點擊進入聊天室 → tooltip 立即消失（**2026-07-27 Bug 2 修復驗證**）
+  - [x] 路徑 B：hover 卡片 → 按 Alt+← 回上一頁 → tooltip 立即消失（**2026-07-27 Bug 2 修復驗證**）
 - [ ] 首頁角色卡片有 `aria-label` 提供可及名稱（需開發者工具檢查，暫緩，留待批次處理）
 
 ### 4.3 路由還原（重新整理測試）
@@ -198,14 +235,18 @@
 - [ ] Toast 元素有 `role="status" aria-live="polite"`（需開發者工具檢查，暫緩）
 
 ### 5.6 重啟聊天室（♻️ 按鈕）
-- [ ] 點擊 → `confirm()` 對話框 → 確認後顯示「聊天室準備中...」，等待重新建立完成
-- [ ] 重啟失敗（模擬後端錯誤）→ 顯示 toast，**不是** `alert()`（本輪明確修掉的地方）
+- [x] 點擊 → `confirm()` 對話框 → 確認後顯示「聊天室準備中...」，等待重新建立完成
+- [x] 重啟失敗（模擬後端錯誤）→ 顯示 toast，**不是** `alert()`（本輪明確修掉的地方）
+      **⚠️ 實測發現不符：見文末「發現的新問題」第 5 項。** 沒有出現 `alert()`（原本要修的問題確實
+      沒有復發），但也**沒有出現 toast**——實測方式是按下確定重建後立刻關閉 chat-service，畫面卡在
+      「聊天室建立失敗，請重新整理頁面再試」的置中懸浮層（跟 5.1 建立聊天室共用的那個懸浮層，不是
+      toast），輸入框停在停用狀態，須整頁重新整理才能恢復。
 
 ### 5.7 其他
-- [ ] 🔄 重新整理按鈕：單純整頁 reload，歷史訊息重新從後端載入
-- [ ] 长對話捲動：傳送/載入超過一畫面的訊息量，捲動流暢；停在最底部時新訊息自動跟著捲到底；
-      往上捲看歷史時不會被強制拉回底部
-- [ ] 直接在網址列輸入 `/rooms/<角色id>` 並重新整理 → 停留在聊天室（不是被導回首頁），這是刻意
+- [x] 🔄 重新整理按鈕：單純整頁 reload，歷史訊息重新從後端載入
+- [x] 长對話捲動：傳送/載入超過一畫面的訊息量，捲動流暢；停在最底部時新訊息自動跟著捲到底；
+      往上捲看歷史時不會被強制拉回底部（實測：累積超過 20 則訊息，上下捲動無明顯卡頓）
+- [x] 直接在網址列輸入 `/rooms/<角色id>` 並重新整理 → 停留在聊天室（不是被導回首頁），這是刻意
       設計（用 `/rooms/` 而非 `/chat/` 避開 Caddy 整段代理，若走 `/chat/...` 重整會壞掉）
 
 ---
@@ -215,60 +256,75 @@
 > 放在聊天測完之後，避免刪掉正在用來測聊天的角色。
 
 ### 6.1 編輯角色流程
-- [ ] 回「我的角色」清單，點某張卡片的「⋮」→「✏️ 編輯」→ 進入編輯頁，欄位正確帶入該角色現有資料
+- [x] 回「我的角色」清單，點某張卡片的「⋮」→「✏️ 編輯」→ 進入編輯頁，欄位正確帶入該角色現有資料
       （含 few-shots 列表）
-- [ ] 修改欄位後送出 → `PUT /api/characters/:id` → 成功訊息 → 1.5 秒後跳回清單
-- [ ] 直接在網址列打開編輯頁但不帶 `?id=` 參數 → 訊息框顯示「缺少角色 ID」錯誤，不會壞掉整頁
+- [x] 修改欄位後送出 → `PUT /api/characters/:id` → 成功訊息 → 1.5 秒後跳回清單（**2026-07-27 Bug 1 修復驗證**）
+- [x] 直接在網址列打開編輯頁但不帶 `?id=` 參數 → 訊息框顯示「缺少角色 ID」錯誤，不會壞掉整頁
+      **❌ 未通過，見文末「發現的新問題」第 6 項。** 實測 `http://localhost:8080/my-characters/edit`
+      （不帶 `id`）結果是**靜默轉向回首頁**，不是預期的錯誤訊息。
 
 ### 6.2 刪除角色流程
-- [ ] 點「刪除」按鈕 → 跳出瀏覽器原生 `confirm()`（文字：「確定要刪除此角色嗎？此動作無法復原。」）
-  - [ ] 按「取消」→ 什麼都不發生，角色還在
-  - [ ] 按「確定」→ `DELETE /api/characters/:id` → 成功訊息 → 1.5 秒後跳回清單，該角色從清單消失
+- [x] 點「刪除」按鈕 → 跳出瀏覽器原生 `confirm()`（文字：「確定要刪除此角色嗎？此動作無法復原。」）
+  - [x] 按「取消」→ 什麼都不發生，角色還在
+  - [x] 按「確定」→ `DELETE /api/characters/:id` → 成功訊息 → 1.5 秒後跳回清單，該角色從清單消失（**2026-07-27 Bug 1 修復驗證**）
 
 ### 6.3 可及性
-- [ ] 純鍵盤（Tab/Enter）能完成整個編輯/刪除流程
+- [x] 純鍵盤（Tab/Enter）能完成整個編輯/刪除流程
+      **❌ 未通過，見文末「發現的新問題」第 7 項。** 建立角色全程鍵盤操作沒問題；但對既有角色，
+      Tab 到「⋮」選單並開啟後，選單內「編輯」選項 Tab 能移入但按 Enter 沒有反應，卡住無法繼續。
 
 ---
 
 ## 第七階段｜persona-nexus-lobby：其餘功能（對話歷史、手機版、其他路由）
 
 ### 7.1 側邊欄對話歷史
-- [ ] 側邊欄顯示曾經聊過的對話清單（`GET /api/conversations/summary`）
-- [ ] 點擊某筆對話 → 導向對應聊天室
-- [ ] 「⋮」→「🗑️ 刪除」→ `confirm()`（文字含角色名稱）→ 確認後該筆從清單消失
-- [ ] 刪除失敗（模擬後端錯誤）→ 顯示錯誤訊息（**有**把 `error.message` 顯示給使用者，跟 character
-      頁不同，確認訊息確實有意義而非顯示 undefined）
+- [x] 側邊欄顯示曾經聊過的對話清單（`GET /api/conversations/summary`）（實測：共 3 個對話載入成功）
+- [x] 點擊某筆對話 → 導向對應聊天室
+- [x] 「⋮」→「🗑️ 刪除」→ `confirm()`（文字含角色名稱）→ 確認後該筆從清單消失
+- [x] 刪除失敗（模擬後端錯誤）→ 顯示錯誤訊息（**有**把 `error.message` 顯示給使用者，跟 character
+      頁不同，確認訊息確實有意義而非顯示 undefined）（實測：關閉 chat-service 觸發 502，畫面顯示
+      「刪除失敗: 刪除失敗: 502」——`api.js:56` 與 `conversation-history.js:33` 各自組了一次
+      「刪除失敗:」文案疊字重複，屬輕微文案瑕疵，不影響訊息可讀性，使用者確認不影響通過判定，
+      不另開新問題記錄）
 
 ### 7.2 手機版側邊欄
-- [ ] 縮小視窗寬度（或用 devtools 裝置模擬）→ 漢堡選單開啟側邊欄抽屜、點遮罩關閉
-- [ ] **已知缺口**：測試按 Escape 是否能關閉手機抽屜（程式碼顯示目前沒有實作），如果證實真的不能
-      關，記錄成已知限制，不當場修
+- [x] 縮小視窗寬度（或用 devtools 裝置模擬）→ 漢堡選單開啟側邊欄抽屜、點遮罩關閉
+- [x] **已知缺口**：測試按 Escape 是否能關閉手機抽屜（程式碼顯示目前沒有實作），如果證實真的不能
+      關，記錄成已知限制，不當場修（**實測確認：按 Escape 確實無法關閉手機抽屜**，符合程式碼
+      預期，判定為已知限制，非新 bug）
 
 ### 7.3 登出
-- [ ] 登出按鈕 → 清除 token、導向 `/login/`
+- [x] 登出按鈕 → 清除 token、導向 `/login/`（實測：devtools Application 分頁確認 localStorage
+      已清空、網址列正確變成 `http://localhost:8080/login/`）
 
 ### 7.4 Iframe 導航串接
-- [ ] 從大廳分別導向 create / edit / chat 三種 iframe 頁面時，URL 上的 `token`（與 `id`/
+- [x] 從大廳分別導向 create / edit / chat 三種 iframe 頁面時，URL 上的 `token`（與 `id`/
       `characterId` 等參數）都有正確帶到 iframe 裡（devtools 檢查 iframe 的 `src` 屬性）
-- [ ] 建立/編輯/刪除角色完成後，iframe 內頁面用 `window.parent.location.href` 導回大廳，確認導頁
+      （實測三種頁面 `src` 皆確認：create 帶 `token`、edit 帶 `token`+`id`、chat 帶
+      `token`+`characterId`，皆為有效值，非空或 undefined）
+- [x] 建立/編輯/刪除角色完成後，iframe 內頁面用 `window.parent.location.href` 導回大廳，確認導頁
       發生在**最外層**（網址列變化），不是卡在 iframe 內部
 
 ### 7.5 邊界情境
-- [ ] 封鎖 `/api/config` 或後端整個不可達 → 確認**整個頁面**（不只是訊息框）被替換成純文字錯誤
+- [x] 封鎖 `/api/config` 或後端整個不可達 → 確認**整個頁面**（不只是訊息框）被替換成純文字錯誤
       訊息「❌ 無法連線至服務器，請稍後重試。」（比 auth/character 更激進，會整頁替換）
+      （實測：整頁正確替換為該錯誤文字，符合預期）
 
 ---
 
 ## 第八階段｜跨服務一致性檢查（收尾）
 
-- [ ] 四個服務的訊息提示視覺風格是否一致（字體、顏色、位置）——已知 auth/character 用
+- [x] 四個服務的訊息提示視覺風格是否一致（字體、顏色、位置）——已知 auth/character 用
       `success`/`error` 兩色，lobby 用 `info`/`error`（無 success），chat 用單一 toast 樣式無分色，
       **這是本輪已知、刻意保留的差異**，此處只需確認沒有出現非預期的第三種風格
-- [ ] 四個服務裡曾經用過 `alert()` 的地方（chat 重啟失敗等）現在全部改為 toast 或訊息框，實測過程
-      中留意有沒有漏網的 `alert()` 跳出
-- [ ] 全程操作中 Console 分頁沒有出現非預期的 JS 錯誤或 404
-- [ ] Network 分頁確認所有 API 請求都走相對路徑 `/api/...`（同源），沒有任何請求打向裸 port
-      （`localhost:8000`/`5173`/`5175` 等）
+      （回顧全程測試，未發現第三種風格）
+- [x] 四個服務裡曾經用過 `alert()` 的地方（chat 重啟失敗等）現在全部改為 toast 或訊息框，實測過程
+      中留意有沒有漏網的 `alert()` 跳出（回顧全程測試，包含 5.6/6.1/6.3 三項新發現的異常，
+      皆非 `alert()` 跳窗，確認全程未出現漏網的 `alert()`）
+- [x] 全程操作中 Console 分頁沒有出現非預期的 JS 錯誤或 404
+- [x] Network 分頁確認所有 API 請求都走相對路徑 `/api/...`（同源），沒有任何請求打向裸 port
+      （`localhost:8000`/`5173`/`5175` 等）（回顧全程測試，包含頁面網址與 API 請求皆為
+      `http://localhost:8080/...`，未見裸 port）
 
 ---
 
@@ -277,99 +333,142 @@
 > 執行完畢後回來填寫。若發現新問題，先記錄現象，**不要當場動手改程式碼**——回頭跟這次優化的規格
 > （`openspec/specs/*/spec.md`）核對是否為已知限制，還是需要另開新的優化 change 處理。
 
-- 測試日期：
-- 測試環境：（作業系統／瀏覽器版本）
-- 第一階段（auth）：
-- 第二階段（lobby 基本）：
-- 第三階段（character 建立）：
-- 第四階段（lobby 確認）：
-- 第五階段（chat）：
-- 第六階段（character 編輯/刪除）：
-- 第七階段（lobby 其餘功能）：
-- 第八階段（跨服務一致性）：
+- 測試日期：2026-07-26～2026-07-27（分兩個聊天室接續完成）
+- 測試環境：Windows 11，Chrome/Edge（真實瀏覽器，未使用 VS Code 內建 Simple Browser）
+- 第一階段（auth）：全數通過
+- 第二階段（lobby 基本）：全數通過
+- 第三階段（character 建立）：全數通過（3.3 兩項可及性細節暫緩，非必要）
+- 第四階段（lobby 確認）：全數通過（4.2 一項 aria-label 細節暫緩，非必要）
+- 第五階段（chat）：全數測完。5.4/5.5 各一兩項可及性細節暫緩；5.6 第二項未通過（見新問題第 5 項）
+- 第六階段（character 編輯/刪除）：全數測完。6.1 剩餘項未通過（見新問題第 6 項）；
+  6.3 未通過（見新問題第 7 項）
+- 第七階段（lobby 其餘功能）：全數通過
+- 第八階段（跨服務一致性）：全數通過
+- **總結**：8 個階段全部測完。過程中新發現 3 個問題（第 5～7 項，皆已記錄現象與根因、
+  未動手修復，留待後續另開規劃處理），加上先前已修復並驗證通過的 4 個 bug（第 1～4 項），
+  本輪測試共發現並記錄 7 個問題。暫緩的可及性細項（aria-label 等）維持暫緩，未主動處理。
 - 發現的新問題（若有）：
 
-  1. **【真實 bug，本輪 SOP 優化引入，尚未 commit】建立角色成功後跳轉失敗**
-     - **現象**：在 `persona-nexus-character` 建立角色成功後，1.5 秒自動跳轉時網址列變成
-       `http://my-characters/`，顯示 `ERR_NAME_NOT_RESOLVED`，沒有正確跳回大廳「我的角色」頁。
-     - **根因**：`persona-nexus-character/src/create.js:23` 把 `LOBBY_APP_URL` 從舊版的絕對網址
-       （`config.frontends.lobby`，如 `http://localhost:5175`）改成相對路徑常數 `'/'`（本輪 SOP
-       明確要做的改動），但第 56 行的拼接邏輯沒有同步調整：
-       `` `${LOBBY_APP_URL}/my-characters` `` 在 `LOBBY_APP_URL='/'` 時算出來是
-       `'//my-characters'`——開頭雙斜線的字串在瀏覽器眼中是「protocol-relative URL」（協定相對
-       網址，代表要連到叫 `my-characters` 的網域），於是被導去 `http://my-characters/`，而不是
+  > ⚠️ **以下 4 項已於 2026-07-26～27 完成調查、修復、並經真人瀏覽器實測驗證通過**，本節內容
+  > 已改寫為修復後的最終狀態。完整調查報告（含證據、根因分析、原本三項被推翻的錯誤描述）見
+  > 《前端網頁debug_task_checklist.md》。**下面 1-4 項不是仍待處理的 bug，是本輪測試過程中
+  > 發現、且已收斂完成的問題記錄，保留供回溯查閱。**
+
+  1. **【已修復】建立/編輯/刪除角色成功後，自動跳轉壞掉（雙斜線 URL）**
+     - **原現象**：`persona-nexus-character` 完成建立/編輯/刪除後，1.5 秒自動跳轉時網址列變成
+       `http://my-characters/`（`ERR_NAME_NOT_RESOLVED`），而非正確的
        `http://localhost:8080/my-characters`。
-     - **確認方式**：`git diff -- persona-nexus-character/src/create.js` 顯示這行是本輪優化改的、
-       尚未 commit；優化前的舊版用絕對網址拼接沒有這個問題。
-     - **待辦**：`create.js:56` 需要改成不會產生雙斜線的拼法（例如
-       `LOBBY_APP_URL === '/' ? '/my-characters' : \`${LOBBY_APP_URL}/my-characters\`` ，或乾脆讓
-       `LOBBY_APP_URL` 定義成空字串 `''` 而非 `'/'`）。**`persona-nexus-character/src/edit.js` 很可能
-       有同樣的拼接問題（跳轉邏輯是同一套 pattern，抄自 create.js），下次修的時候要一併檢查**。
-     - **狀態**：使用者決定先記錄、之後再回頭修，暫不影響繼續往後測試。
-     - **補充（第二次重現）**：3.2 測試建立第二個角色時，Network 分頁證實 `POST /api/characters`
-       回應 `201 Created`（建立本身沒問題），緊接著同一個跳轉 bug 又發生一次（`create.js:56`
-       發出的 `my-characters` 文件請求失敗，頁面卡在 `chrome-error://chromewebdata/`），確認是
-       穩定可重現、非偶發。
+     - **實際範圍比最初發現的更大**：不是只有 `create.js:56` 一處，`edit.js:78`（更新後跳轉）與
+       `edit.js:101`（刪除後跳轉）也是同樣的拼接缺陷，代表建立/更新/刪除三條流程的跳轉全部壞掉。
+     - **根因**：`LOBBY_APP_URL` 定義成相對路徑常數 `'/'`，`` `${LOBBY_APP_URL}/my-characters` ``
+       在此情況下算出 `'//my-characters'`——開頭雙斜線被瀏覽器當成 protocol-relative URL（連到
+       叫 `my-characters` 的網域），因此導向錯誤位置。
+     - **修法**：改用完整路徑常數（`LOGIN_URL = '/login/'`、`MY_CHARACTERS_URL = '/my-characters'`），
+       所有跳轉呼叫點零拼接，結構上不再可能重犯這類 bug。
+     - **驗證**：2026-07-27 真人瀏覽器實測，建立/更新/刪除三條路徑網址列皆正確停在
+       `http://localhost:8080/my-characters`（見本文件 3.2、6.1、6.2）。
 
-  2. **【真實 bug】角色簡介 tooltip 點擊卡片進入聊天室後不會消失，殘留畫面**
-     - **現象**：在大廳首頁滑鼠移到角色卡片上，右側會浮現簡介 tooltip；直接點卡片進入聊天室後，
-       這個 tooltip **沒有消失**，會一路殘留、疊在聊天室畫面上，一直到使用者回大廳、對任一張卡片
-       完整做一次「滑入再滑出」才會消失。
-     - **根因**：`persona-nexus-lobby/src/character-tooltip.js` 把 tooltip 元素建成掛在
-       `document.body` 下的**全站共用單例**，靠 `mouseleave` 事件把 `style.opacity` 設回 `'0'`
-       來「隱藏」，**從未真的從 DOM 移除**（見 `attachIntroTooltip()` 內的 `mouseleave` handler，
-       檔案開頭註解也寫明是靠「移出卡片即淡出」這個機制，未考慮導頁情境）。因為 lobby 是 SPA、
-       切頁不會整頁重載，`document.body` 跨頁延續，若點擊卡片觸發的導頁搶在瀏覽器真正派發
-       `mouseleave` 事件之前就把卡片元素換掉/移除，`mouseleave` 就不會確實執行，tooltip 的
-       `opacity` 便永遠卡在 `'1'`。
-     - **確認方式**：使用者實測重現：大廳 hover 角色卡 → 點擊進入聊天室 → tooltip 殘留在聊天室
-       畫面上；回大廳、對任一卡片完整 hover 一次後才消失。
-     - **待辦**：`home.js` 的卡片 `click` handler 觸發導頁前，應主動呼叫一次讓 tooltip 隱藏（例如
-       匯出一個 `hideTooltip()` 供外部呼叫），或導頁時機統一在別處清理殘留的 body 級 UI 元素，
-       不要只依賴 `mouseleave` 這個不保證觸發的事件。
-     - **狀態**：先記錄現象，暫不修復，待後續統一處理。
+  2. **【已修復】角色簡介 tooltip 點擊卡片進入聊天室後不會消失，殘留畫面**
+     - **原現象**：大廳首頁 hover 角色卡片顯示簡介 tooltip，點卡片進入聊天室後 tooltip 沒有消失，
+       殘留疊在聊天室畫面上，直到回大廳對任一卡片完整「滑入再滑出」才會消失。
+     - **根因**：tooltip 是掛在 `document.body` 下的全站共用單例，只靠 `mouseleave` 設
+       `opacity='0'`「隱藏」，從未真正從 DOM 移除；點擊卡片導頁時，卡片元素隨即被替換，
+       `mouseleave` 沒有機會被派發。
+     - **修法**：`character-tooltip.js` 內部新增 `hideTooltip()`，同時綁在卡片的 `click` 事件與
+       `window` 的 `popstate` 事件上（涵蓋「點卡片導頁」與「瀏覽器上一頁/下一頁」兩條會讓卡片
+       在指標仍停留其上時被銷毀的路徑），`home.js`/`main.js` 不需要知道 tooltip 的存在。
+     - **驗證**：2026-07-27 真人瀏覽器實測，兩條路徑（點卡片進聊天室、按 Alt+← 回上一頁）
+       tooltip 皆立即消失，無殘留（見本文件 4.2）。
 
-  3. **【非前端 bug，後端/基礎設施韌性問題，順便記錄】ai-service 與 Qdrant 斷線後無法自動重連**
-     - **現象**：測試 5.2「模擬 AI 生成失敗」情境時，手動關閉 Qdrant docker 容器後再重新啟動，
-       `ai-service` 仍然連不回去（持續噴 `[WinError 10061] 無法連線，因為目標電腦拒絕連線`／
-       `Failed to create collection: characters`），必須把所有服務（含 Docker）全部關閉，
-       用 `start-all-services.bat` 從頭啟動一次、讓它自動拉起 Qdrant，聊天功能才恢復正常。
-     - **範圍澄清**：這不是本輪前端 SOP 優化要處理的範圍（前端行為本身完全正確，見下方
-       「前端行為驗證通過」），是 `ai-service`／Qdrant client 連線管理的韌性問題（可能是
-       qdrant-client 或 httpx 的連線池快取了失效連線、沒有重試或重建連線的機制），跟四個前端
-       服務的程式碼無關。
-     - **前端行為驗證通過（這才是本測項真正要驗證的）**：AI 生成失敗時，聊天介面正確顯示
-       「（角色名稱）回應失敗: SERVICE_ERROR: Request failed with status code 500，請重試」
-       的**對話氣泡內失敗提示**，符合設計（不是 `alert()`、不是 toast，這種錯誤刻意走氣泡樣式），
-       輸入框也確認有恢復可用。5.2 該項目判定通過。
-     - **狀態**：僅記錄現象供之後排查 ai-service／Qdrant 連線韌性用，不影響本輪前端測試結論。
+  3. **【已修復】Qdrant 中斷後，ai-service 必須整套重啟才恢復**
+     - **原描述已被證偽並修正**：最初懷疑是「qdrant-client/httpx 連線池快取了失效連線」，
+       經實機實驗證實**不成立**——同一個 client 物件在 Qdrant 回來後會自動恢復連線，
+       連線層本身沒有問題。
+     - **真正根因是三件事疊加**：(a) collection 只在服務啟動時建立一次，建立失敗被
+       `except` 吞掉、只印日誌不影響啟動；(b) `/health` 從未真正檢查 Qdrant 連線，即使
+       RAG 完全不能用也回報 `{"status":"ok"}`；(c) 部署優化把 Qdrant 容器改成 `--rm`，
+       容器一停止就被刪除，若不慎從 Docker Desktop 的 Images 頁重開，會得到一個沒有
+       port 對應、沒有資料卷的全新容器，這才是「連不上」的真正原因。
+     - **修法（A/B/C/D 全做）**：collection 改為執行期冪等自動補建（A）；`/health` 接上
+       真實的 Qdrant 連線檢查，不可達回 503 degraded（B）；啟動腳本的 Qdrant 容器拿掉 `--rm`、
+       改 `--restart unless-stopped`（C）；startup 維持不因 Qdrant 未就緒而 crash，
+       依 12-Factor Disposability 原則（D）。
+     - **驗證**：2026-07-27 真人瀏覽器實測，Qdrant 停止期間啟動 ai-service 不 crash、`/health`
+       正確回 503 degraded；重新啟動 Qdrant 後 `/health` 自動恢復 200 ok（全程未重啟
+       ai-service）；新建聊天室聊天恢復正常（collection 自動補建）。
 
-  4. **【真實 bug】聊天室輪詢逾時（空訊息陣列）時，`virtualMessageList.js` 會丟出未捕捉例外，
-     蓋掉原本該顯示的「建立失敗」錯誤訊息**
-     - **現象**：測試 5.6 重啟聊天室時，恰好撞上後端卡在 `202 preparing` 狀態（見上方第 3 項的
-       ai-service/Qdrant 連線問題），輪詢滿 120 次逾時後，Console 出現：
-       `Uncaught TypeError: Cannot read properties of undefined (reading 'id') at keyOf (chat.js:78)`，
-       呼叫鏈是 `initChat → renderMessages → createVirtualMessageList → sync → computeRange → keyOf`。
-       畫面沒有正確顯示規格設計中「聊天室建立失敗，請重新整理頁面再試」的錯誤覆蓋層文字。
-     - **根因**：`persona-nexus-chat/src/virtualMessageList.js` 的 `computeRange(items)` 函式處理
-       **空陣列**（`items.length === 0`）時有漏洞：找不到任何項目的迴圈跑完後 `i === items.length`
-       （`0 === 0`）會成立，接著執行
-       `` start = Math.max(0, items.length - 1) `` （空陣列時算出 `0`）、
-       `` startOffset = offset - slotHeight(keyOf(items[start])) ``——但 `items[0]` 在空陣列上是
-       `undefined`，`keyOf(undefined)` 也就是存取 `undefined.id`，直接拋出例外。
-     - **觸發路徑**：`persona-nexus-chat/src/chat.js:632`（`initChat` 函式尾端「初始化渲染」那行）
-       在 `await initializeChat(characterId)` 執行完後，**不論成功或失敗都無條件呼叫一次
-       `renderMessages()`**。`initializeChat()` 逾時失敗時只會顯示錯誤覆蓋層文字然後 `return`，
-       `messages` 變數仍是初始值 `[]`，於是這次無條件呼叫的 `renderMessages()` 就以空陣列觸發
-       `virtualMessageList` 的這個漏洞，例外蓋過了原本要顯示的錯誤訊息（實際畫面行為待確認：
-       是整頁卡死、還是错误覆蓋層文字曾短暫顯示又被打斷，需要再觀察一次畫面而非只看 Console）。
-     - **確認方式**：讀 `virtualMessageList.js` 原始碼定位到 `computeRange()` 對空陣列的處理漏洞；
-       讀 `chat.js:625-634` 確認 `renderMessages()` 在 `initializeChat` 後是無條件呼叫，沒有檢查
-       `messages.length` 或 initializeChat 是否成功。
-     - **待辦**：`computeRange()` 應在函式開頭對 `items.length === 0` 直接提前返回一個安全的空區間
-       （不執行任何 `keyOf(items[...])` 存取）；或 `chat.js:632` 那行無條件呼叫的 `renderMessages()`
-       應該检查 `messages.length > 0` 才呼叫，兩者修一個就能避免這個崩潰，但前者是更根本的修法
-       （`virtualMessageList` 作為通用模組，不該假設呼叫端一定給非空陣列）。
-     - **狀態**：先記錄，暫不修復；影響範圍是「聊天室初次建立就失敗/逾時」這個原本就少見的邊界
-       情境，不影響已建立成功的正常聊天流程（本次前面 5.1-5.5 的正常/AI失敗情境測試都沒有觸發
-       這個問題，訊息陣列當時都非空）。
+  4. **【已修復】聊天室輪詢逾時（空訊息陣列）時，`virtualMessageList.js` 拋出未捕捉例外**
+     - **原描述已修正**：最初記錄「例外蓋掉了原本該顯示的建立失敗錯誤訊息」，經追查程式碼執行
+       順序後**證實不成立**——錯誤覆蓋層文字在例外發生之前就已寫入 DOM 並正常顯示，
+       兩者互不影響。真正的後果是例外導致 `vlist` 卡在 `null`、之後每次 `renderMessages()`
+       都會重跑並再次崩潰，以及 Console 出現對開發者造成誤導的未捕捉例外。
+     - **根因**：`computeRange(items)` 處理空陣列時有漏洞，最終會執行 `keyOf(items[0])`，
+       但空陣列的 `items[0]` 是 `undefined`，存取 `undefined.id` 直接拋出 `TypeError`。
+     - **修法**：`computeRange()` 開頭對 `items.length === 0` 提前返回安全的空區間
+       `{ start: 0, end: -1, offsetTop: 0 }`，讓 `renderWindow()` 的迴圈自然不執行。
+     - **驗證**：2026-07-27 真人瀏覽器實測（關閉 chat-service 模擬聊天室建立逾時），
+       畫面正確顯示「聊天室建立失敗」訊息，Console 不再出現該 TypeError（見本文件 5.1）。
+
+  5. **【新發現，未修復】重啟聊天室時，若「建立新聊天室」步驟逾時失敗，不會顯示 toast，而是卡在
+     「聊天室建立失敗」懸浮層，輸入框永久停用**
+     - **服務**：`persona-nexus-chat`
+     - **檔案**：`src/chat.js:599-603`（`restartBtn` click handler 內「步驟 2：建立新聊天室」）
+     - **現象**：點 ♻️ → 確認 → 顯示「聊天室重啟中...」→ 刪除舊聊天室成功 → 顯示「聊天室準備
+       中...」開始建立新聊天室 → 此時若後端不可達（實測：按下確定的瞬間關閉 chat-service），
+       輪詢逾時後畫面顯示「聊天室建立失敗，請重新整理頁面再試」（沿用 5.1 建立聊天室共用的
+       置中懸浮層文字），**沒有 toast**，也沒有呼叫 `hideInitializing()`，輸入框維持停用，
+       須整頁重新整理才能恢復。
+     - **根因**：`pollForConversation()` 逾時時回傳 falsy（不是 `throw`），第 599-602 行對此
+       直接 `showInitializing(...)` 後 `return`——這個 `return` 會跳出整個 async 函式，永遠
+       不會執行到第 615 行的 `catch` 區塊，因此 `showToast('重啟失敗: ...')`（第 617 行）在這條
+       路徑上架構上就不可能被呼叫到。只有「刪除舊聊天室失敗」（第 589-591 行，真的會 `throw`）
+       才會走到 catch → 顯示 toast。
+     - **判定**：先前 debug 輪次修 `alert()`→toast 時沒覆蓋到的漏網路徑，不在原本 4 個已知
+       bug 名單內，是本次測試新發現的第 5 個問題。**沒有復發 `alert()`**，但沒有達成
+       「重啟失敗顯示 toast」的預期行為。是否修復、修法為何，留給使用者決定，本節僅記錄現象
+       與根因，未動手改程式碼。
+
+  6. **【新發現，未修復，判定未通過】編輯頁未帶 `?id=` 參數時，靜默轉向回首頁，沒有任何錯誤提示**
+     - **服務**：`persona-nexus-lobby`（根因）／`persona-nexus-character`（受影響但本身邏輯正確）
+     - **檔案**：`persona-nexus-lobby/src/main.js:68`（`restoreRouteFromUrl()` 的路由還原邏輯）
+     - **現象**：直接在網址列輸入 `http://localhost:8080/my-characters/edit`（不帶 `id` 參數）
+       並 Enter，畫面**靜默轉向回首頁**，沒有出現任何錯誤訊息或提示，使用者不會知道發生了
+       什麼事、也不知道正確進入編輯頁的方式（應從角色列表進入）。
+     - **根因**：`main.js:68` 的路由判斷 `if (pathname === '/my-characters/edit' && params.get('id'))`
+       要求 `id` 參數為真值才會進入編輯頁流程；不成立時直接落到第 89-91 行「其餘一律回首頁」的
+       fallback，**連 iframe 都還沒載入**。而 `persona-nexus-character/src/edit.js:41-43` 確實有寫
+       正確的「缺少角色 ID」錯誤訊息邏輯，但因為 lobby 這一層路由 gate 先攔截，那段邏輯在這條
+       路徑下永遠執行不到，形同死碼。
+     - **與《前端系統設計原則》的關係**（使用者要求對照後判定）：
+       - **D 節「錯誤預防與明確回饋」**：靜默轉頁沒有給任何錯誤說明或修正路徑，比顯示一個
+         「笨」但清楚的錯誤訊息更差。
+       - **D 節「一致性與標準」**：對照本文件 3.3 節已驗證的案例——瀏覽器上一頁回到「id 存在
+         但角色已被刪除」的編輯頁時，`edit.js` 的 404 處理**確實會顯示**「✕ 載入失敗，請稍後
+         重試。」錯誤訊息。同樣是「進不了編輯頁」的情境（id 缺失 vs. id 存在但角色不存在），
+         兩條路徑的使用者體驗完全不一致，一個有清楚回饋、一個什麼都沒說。
+     - **使用者判定**：這是先前優化階段（`lobby-simplify` 等 change）沒有規劃到的路徑——優化
+       腳本沒把「這一層路由 gate 攔截時該怎麼回饋使用者」納入設計範圍，但本輪測試腳本卻把它
+       納入測項，兩邊落差因此在此暴露。**判定本測項未通過**，是否回頭修復（例如路由 gate
+       在缺 `id` 時顯示訊息再導頁，而非靜默轉向）留待後續另開規劃，本節僅記錄現象、根因與
+       原則對照，未動手改程式碼。
+
+  7. **【新發現，未修復，判定未通過】角色卡片「⋮」選單的「編輯」選項無法用鍵盤（Enter/Space）觸發**
+     - **服務**：`persona-nexus-lobby`
+     - **檔案**：`src/my-character.js:60-69`（編輯選項）；同一套寫法也出現在
+       `src/conversation-history.js:18-22`（第七階段側邊欄對話歷史的「刪除」選項，尚未實測到，
+       但程式碼結構相同，判斷會有同樣問題，留待第七階段測到時一併確認）
+     - **現象**：純鍵盤操作「我的角色」清單頁——Tab 移到某張角色卡片的「⋮」選單按鈕、按 Enter
+       開啟選單後，焦點確實自動移到「編輯」選項（4.1 已驗證過這點沒問題），但接著按 Enter
+       **沒有任何反應**，無法進入編輯頁，鍵盤操作在此卡住。建立新角色的流程（3.2/3.3）純鍵盤
+       操作沒有問題，問題只出在「既有角色的編輯入口」這個環節。
+     - **根因**：`editOption` 是用 `document.createElement('div')` 建立、加上
+       `tabindex="0"`（讓它能被 Tab 移入焦點），只綁了 `addEventListener('click', ...)`
+       （第 64 行），沒有另外綁 `keydown` 事件處理 Enter/Space。瀏覽器只有原生 `<button>`
+       元素會在 Enter/Space 按下時自動觸發 `click`；`<div>` 加 `tabindex` 只解決了「能不能被
+       Tab 移入」，並不會讓鍵盤按鍵自動等效於滑鼠點擊，這是兩件事，此處遺漏了後者。
+     - **與《前端系統設計原則》的關係**：D 節 WCAG——「互動元素（tab 切換、按鈕）是否能用
+       鍵盤（Tab / Enter）操作，而不是只在滑鼠點擊時綁事件」，這裡正是只綁了滑鼠事件的案例。
+     - **使用者判定**：與第 6 項同理，是先前優化階段未規劃到、本輪測試腳本才發現的落差。
+       **判定本測項未通過**。是否修復（例如補上 `keydown` 監聽 Enter/Space 觸發同一段邏輯，
+       或改用原生 `<button>` 取代 `<div tabindex>`）留待後續另開規劃，本節僅記錄現象與根因，
+       未動手改程式碼。
