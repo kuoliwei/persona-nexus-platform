@@ -1,5 +1,182 @@
 # 前端網頁 Debug Task Checklist
 
+# 🆕 交接說明（2026-07-27，新任務：稽核本輪 debug 是否違反四份設計文件）
+
+> **這是目前最新、最優先要做的任務，請先讀這一段。** 下面從「一句話現況」開始的內容都是
+> *前一輪工作*（8 個 bug 的調查、修復、測試）的完整記錄，本輪不用重做，是**查核材料**。
+
+## 任務是什麼
+
+檢查本文件記錄的 8 個 bug 修復（第 1～8 項），有沒有讓被動到的專案違反這四份文件的內容：
+
+- `後端系統設計原則.md`
+- `微服務架構準則.md`
+- `微服務架構實作spec.md`
+- `前端系統設計原則.md`
+
+四份文件都在專案根目錄，跟本文件同一層。
+
+## 這 8 個 bug 分別動到哪些專案（決定了要對照哪份文件）
+
+| Bug | 動到的專案 | 性質 | 主要該對照的文件 |
+|---|---|---|---|
+| 1 | `persona-nexus-character` | 純前端 | 前端系統設計原則 |
+| 2 | `persona-nexus-lobby` | 純前端 | 前端系統設計原則 |
+| 3 | `persona-nexus-chat` | 純前端 | 前端系統設計原則 |
+| **4** | **`ai-service`（後端）+ 兩支部署 bat** | **唯一牽涉後端／跨服務** | **後端系統設計原則 + 微服務架構準則 + 微服務架構實作spec** |
+| 5 | `persona-nexus-chat` | 純前端 | 前端系統設計原則 |
+| 6 | `persona-nexus-lobby` | 純前端 | 前端系統設計原則 |
+| 7 | `persona-nexus-lobby` | 純前端 | 前端系統設計原則 |
+| 8 | `persona-nexus-lobby` | 純前端 | 前端系統設計原則 |
+
+**Bug 4 是唯一一個會牽涉到後端／微服務兩份文件的**，其餘 7 個都是前端專案內部的修復，只需要
+對照《前端系統設計原則.md》。稽核時建議把 Bug 4 獨立出來仔細看，其餘 7 個可以一起過。
+
+## 已經先幫忙看過、值得優先深入查的幾個疑點（不是結論，是起點）
+
+這些是我讀過四份文件後，覺得「值得對照確認」的地方，**不是已經下的判斷**，新聊天室要自己去
+兩邊對照原始碼與文件條文確認：
+
+1. **Bug 4 的 `/health` 回應格式，可能不符合《微服務架構實作spec.md》第三部分的「錯誤回應
+   格式」／「成功回應格式」**：spec 定義的成功格式是「單一資源直接回物件」或
+   `{success, message}`，錯誤格式是 `{error, message}`；但 Bug 4 的 `/health` 回的是
+   `{status: "ok"/"degraded", dependencies: {...}}` 這種第三種形狀。健康檢查算不算要遵守這個
+   契約，還是可以自成一格，值得判斷。
+
+2. **Bug 4 用到的 503 狀態碼，沒有出現在《微服務架構實作spec.md》「HTTP Status Code 統一
+   定義」的表格裡**（表格只列了 200/400/401/403/404/409/500）。`/health` 回 503、
+   `rag_controller._raise_for_error()` 也會判 503，這是否算違反「統一定義」，還是健康檢查
+   這種非典型端點本來就不受這張表約束，值得確認。
+
+3. **`rag_controller._raise_for_error()` 用關鍵字字串比對（"qdrant"/"connect"/"refused"）
+   決定要回 500 還是 503**，這是一種隱性、脆弱的契約（依賴錯誤訊息的字面內容做判斷，不是
+   明確定義的錯誤碼/欄位）。對照《後端系統設計原則.md》D 節「契約設計 Design by Contract」
+   的「如何檢查違反：API 的錯誤碼...是否有明確且穩定的契約」，這點值得重點檢查。
+
+4. **Bug 4 的 startup 不 crash（12-Factor IX Disposability）決策，本文件裡已經自己引用了
+   這條原則**（見 Bug 4「已修復」區塊 D 項），可以直接對照《後端系統設計原則.md》C 節的
+   12-Factor 表格核對這個引用/理由站不站得住腳，不用重新從零分析。
+
+5. **Bug 7 的修法選擇「幫 `<div tabindex="0">` 補 `keydown` 監聽器」，而不是「改用原生
+   `<button>`」**。本文件裡已經寫了為什麼不選後者（怕污染既有 CSS）。但《前端系統設計
+   原則.md》B 節「最低能力原則」明講「如何檢查違反：是否用 JS 重新實作了瀏覽器原生就有的
+   能力」——這正是這個情境。值得判斷本文件給的理由（CSS 風險）是否足以蓋過這條原則，或者
+   只是圖方便沒有真的評估過。
+
+6. **Bug 2 的修法明確承認沒有做「根本修法」**（body 級 UI 元素統一在路由切換時清理），
+   只做了「補齊已知路徑」。`message-utils.js` 的同型問題本文件自己就承認仍然存在（見文末
+   「調查／修復中順帶發現」第 2 項）。這是否構成 SoC／模組邊界原則上的「治標不治本」，
+   值得在稽核報告裡明確點出，不要因為本文件自己承認了就跳過不提。
+
+7. **本文件多處引用「SOP 貫穿原則 #6」（可觀察行為改動要先反映在 spec 再改碼）**——這條原則
+   **不在**這四份要稽核的文件裡，是另一份不同的 SOP 文件。稽核時如果要引用它，請先確認它
+   出處為何、跟這四份文件是什麼關係，不要混為一談。
+
+## 做法建議
+
+- 8 個 bug 的完整修復內容都在下方「Bug 1」～「Bug 8」各自的「✅ 已修復」區塊，含改了什麼、
+  為什麼這樣改、當時的理由。**先讀這些，不用重新去讀一次原始碼的 diff**（除非要驗證本文件
+  記載是否仍與現狀相符——四個前端與 ai-service 都是獨立 git repo，可以用 `git log`/`git show`
+  對照）。
+- 建議稽核報告的格式：依《前端系統設計原則.md》《後端系統設計原則.md》《微服務架構準則.md》
+  《微服務架構實作spec.md》四份文件分類，每一條被觸及的原則列「符合／不符合／有疑慮」，
+  並附上是哪個 bug、哪個檔案、哪一行。
+- **這是一份純稽核任務，不是要重新修 bug**——8 個 bug 都已經修完、測完（見下方「一句話
+  現況」與《前端網頁手動測試task.md》第九階段）。如果稽核發現真的違反了原則，先回報給
+  使用者決定要不要修，不要自己動手改。
+- 環境現況：現場資料庫裡還留著這幾輪測試建立的測試帳號/角色/對話資料，dev server 上次可能
+  還在跑（見對話記錄，本文件未記載啟動細節）；本次稽核是讀文件+讀程式碼的靜態工作，
+  不需要啟動任何服務。
+
+## ✅ 稽核結果（2026-07-28）：有違反嫌疑的代辦事項
+
+> 稽核已完成，逐條對照四份文件、並實際讀原始碼驗證（非只讀 checklist 本身的敘述）。
+> 以下只列「有違反嫌疑」的項目，列為代辦，**修不修由使用者決定，本輪未動手改**。
+> 沒有問題的原則（如 KISS/DRY/YAGNI/SSOT、WCAG、一致性與標準等，多數在本輪修復後已符合）
+> 不重複列出，稽核結論見對話記錄；這裡只放需要決策的部分。
+
+### 代辦 A：`message-utils.js` body 級單例殘留，未隨 SPA 路由清除（Bug 2 遺留）
+- **違反**：《前端系統設計原則》B 節「關注點分離 / 模組邊界」——body 級 UI 元素的生命週期
+  沒有跟著 SPA 路由走，這正是 Bug 2 修復前 tooltip 犯的同一種錯誤。
+- **證據**：`persona-nexus-lobby/src/message-utils.js` 的 `getMessageBox()`，在 `chat.html`／
+  `character-edit.html`（不自帶 `#message-box` 的頁面）會 `document.body.appendChild()`
+  出一個 body 級單例，且全檔沒有任何 `remove()`，只靠 `display:none` 隱藏（Bug 2 證據 5）。
+  具體可觸發路徑：`persona-nexus-lobby/src/conversation-history.js:33` 的
+  `showMessage('error', \`刪除失敗: ...\`)` 沒傳 `autoHideMs`，若在聊天室頁側邊欄刪除對話失敗，
+  會留下一個不會自動隱藏、也不會在切頁時被清掉的錯誤訊息框。
+- **狀態**：checklist 本身已承認「未處理、留作已知限制」，依先前回饋（不能因為文件自己
+  承認了就跳過不提），這裡正式列為代辦，不只是註記。
+
+### 代辦 B：`conversation-history.js:33` 的錯誤訊息缺 `autoHideMs`，與 `home.js` 不一致
+- **違反**：《前端系統設計原則》D 節「一致性與標準」——同一組件（錯誤訊息框）在不同呼叫點
+  的行為不一致：`persona-nexus-lobby/src/home.js:81` 有傳 `autoHideMs=3000`（3 秒自動隱藏），
+  `conversation-history.js:33` 沒有傳（永久停留，需搭配代辦 A 的 body 級殘留問題一併看）。
+- **證據**：`persona-nexus-lobby/src/home.js:81` vs `persona-nexus-lobby/src/conversation-history.js:33`
+  兩處呼叫 `showMessage()` 的參數不同，非刻意設計差異，只是遺漏。
+
+### 代辦 C（有正當理由的例外，供覆核）：Bug 7 補 `keydown` 而非改用原生 `<button>`
+- **違反（字面上）**：《前端系統設計原則》B 節「最低能力原則」——「是否用 JS 重新實作了
+  瀏覽器原生就有的能力」，`persona-nexus-lobby/src/my-character.js:60-77` 與
+  `src/conversation-history.js:18-33` 幫 `<div tabindex="0">` 補 `keydown` 監聽器，正是這個情境。
+- **證據（已查證，理由成立）**：`persona-nexus-lobby/src/style.css:279-293` 確實有全域
+  `button {}` 規則（`background-color: #238636`、`border`、`padding: 12px 24px`、
+  `font-weight: bold`），而 `.conversation-menu-item`（`style.css:215-234`）只覆蓋
+  `padding`/`color`/`font-size`/`cursor`/`transition`，**沒有覆蓋
+  `background-color`/`border`/`font-weight`**——若改用原生 `<button>` 會被全域樣式污染，
+  需要額外補一批 CSS override。這個 CSS 風險是真的，不是藉口。
+- **建議**：不需要重修，但建議把「為什麼選 keydown 不選 button」與這段 CSS 證據一併寫進
+  `persona-nexus-lobby` 的 `openspec/specs/lobby-ui/spec.md` 或 `CLAUDE.md`，作為日後稽核
+  不必重查一次的紀錄。
+
+### 代辦 D：`rag_controller._raise_for_error()` 用關鍵字字串比對決定 500／503（Bug 4 加深依賴）
+- **違反**：《後端系統設計原則》D 節「契約設計 Design by Contract」——「API 的錯誤碼...是否有
+  明確且穩定的契約」。`ai-service/src/controllers/rag_controller.py:12-20` 的
+  `_raise_for_error()` 用 `("qdrant", "connect", "refused")` 關鍵字比對錯誤訊息字面內容來決定
+  回 500 還是 503，是隱性、脆弱的契約。
+- **背景**：這個機制是 2026-07-25 `simplify-ai-service` 這輪引入的既有問題，**不是 Bug 4
+  新增的**。但 Bug 4 的修復沒有藉機修正它，反而加深依賴：
+  `ai-service/src/rag/vector_store.py:88-95` 的 `ensure_collection()` 例外訊息刻意寫成含
+  `"Qdrant"` 字樣（原始碼註解自己承認：「訊息刻意含 'Qdrant' 字樣，讓
+  `rag_controller._raise_for_error()` 的關鍵字查表判為連線類錯誤回 503」），現在多了一處
+  狀態碼判斷依賴錯誤訊息字面內容。
+- **建議修法方向**：改用明確的例外型別（如 `QdrantUnavailableError` vs 其他 `Exception`）或
+  顯式錯誤碼欄位，取代字串關鍵字比對。
+
+### 代辦 E：`rag_repository` 三處繞過 `vector_store` 封裝、直接操作 `vector_store.client`
+- **違反**：《後端系統設計原則》B 節「資訊隱藏」——呼叫方（`rag_repository`）依賴被呼叫方
+  （`vector_store`）的內部實作細節（直接拿 `.client` 這個 Qdrant SDK 物件），而非透過
+  `vector_store` 自己的封裝方法。
+- **證據**：`ai-service/src/repositories/rag_repository.py` 的 `replace_protagonist_background()`／
+  `get_latest_summary()`／`delete_conversation_data()` 三個方法直接用
+  `vector_store.client` 操作（Bug 4「已修復」區塊自己列出這三處）。
+- **背景**：同樣是既有問題、非 Bug 4 引入。但 Bug 4 的修法是在這三處各自加一次
+  `ensure_collection()` 呼叫讓它們不撞 404，而不是把這三處收斂回 `vector_store` 的封裝方法。
+  功能上正確（已有測試驗證），但等於在既有的資訊隱藏違反上繼續施工，沒有趁機收斂。
+
+### 代辦 F：《微服務架構實作spec.md》的「HTTP Status Code 統一定義」表格缺 503
+- **違反**：《微服務架構實作spec.md》第三部分「HTTP Status Code 統一定義」表格（原文件
+  152-162 行）只列 200/400/401/403/404/409/500，沒有 503。
+- **證據**：503 早已是平台既有、比 Bug 4 更早的使用模式——
+  `chat-service/src/controllers/conversationController.js` 多處回 503（RAG 清理失敗、AI 服務
+  不可用等，第 45/57/232/261/314/350 行附近）。Bug 4 的 `/health`
+  （`ai-service/app.py:106-107`）是再多加一個 503 使用點，沒有藉這次修復把 503 補進這份
+  平台層 spec 的表格。
+- **建議**：把 503 加進 `微服務架構實作spec.md` 的狀態碼表格，並註明使用時機（依賴的下游
+  服務不可用），讓文件與現行程式碼同步。
+
+### 代辦 G（有疑慮，非明確違反）：`/health` 回應格式不是 spec 定義的任何一種形狀
+- **疑慮**：《微服務架構實作spec.md》第三部分（原文件 183-208 行）只定義了「單一資源物件」
+  「陣列」「`{success,message}`」「`{error,message}`」四種回應形狀，
+  `ai-service/app.py:106-114` 的 `/health` 回應
+  `{status, service, ollama_url, model, dependencies}` 都不吻合，是第三種未定義形狀。
+- **背景**：這是刻意的設計選擇——`app.py:95-96` 的註解說明用 `JSONResponse` 而非
+  `HTTPException`，理由是「健康檢查回報的是狀態不是錯誤，不該被全域 handler 轉成
+  `{error, message}` 而丟失結構」。理由合理，但 spec 文件本身沒有明文豁免健康檢查端點。
+- **建議**：若要讓這個例外站得住腳，建議在 spec 裡補一句「健康檢查端點的回應格式不受此節
+  約束」，否則字面上仍不符合。
+
+---
+
 > 這份文件彙整《前端網頁手動測試task.md》全部 8 個階段（已於 2026-07-27 測完）實測過程中
 > 發現的**真實 bug**，供之後集中排查/修復用。原始測試記錄（含通過的項目、完整現象描述、
 > 根因分析）都保留在《前端網頁手動測試task.md》文末「發現的新問題」。
@@ -23,9 +200,18 @@
 
 ## 一句話現況
 
-四個 bug（第 1～4 項）已修完並經真人瀏覽器實測驗證通過。**2026-07-27 接續完成《前端網頁手動
-測試task.md》剩餘的第五～八階段測試後，又新發現 4 個問題（第 5～8 項），全部尚未修復**，
-已記錄現象與根因，詳見文末新增的「第二輪：2026-07-27 手動測試新發現的問題」章節。
+八個 bug（第 1～8 項）**全部已修復並完成瀏覽器測試**。第 1～4 項是**真人**瀏覽器實測驗證通過；
+第 5～8 項（2026-07-27 接續完成第五～八階段測試時新發現）已於同日完成修復前根因重新核對
+（見各項「🔍 修復前重新核對」區塊）、程式碼修復（見各項「✅ 已修復」區塊），並額外完成
+**Playwright 自動化瀏覽器回歸測試**（無頭 Chromium 實際跑過整個流程，見《前端網頁手動測試
+task.md》第九階段 9.1～9.4，四項全過）。
+
+> ⚠️ **注意這兩者不完全等同**：Playwright 是真正的瀏覽器引擎在跑真正的前端程式碼，但**不是
+> 真人肉身操作**——沒有人類視覺判斷、沒有真實螢幕報讀器。這輪測試已涵蓋畫面文字、Console
+> 例外、DOM 狀態、鍵盤事件等可程式化驗證的部分；若使用者仍想針對可及性等主觀體感做一輪真人
+> 複測，第九階段留的測項清單可以直接沿用。
+
+詳見文末「第二輪：2026-07-27 手動測試新發現的問題」章節與下方進度總表。
 
 ## 進度總表
 
@@ -35,10 +221,10 @@
 | **2** tooltip 殘留 | lobby | ✅ 已修 | 事件流程 8/8、`npm run build`、`openspec validate` | ✅ 真人實測（點卡片／瀏覽器上一頁兩條） |
 | **3** 空陣列崩潰 | chat | ✅ 已修 | 4 條路徑 4/4、原重現腳本已失效、build 13 modules | ✅ 真人實測（聊天室建立逾時） |
 | **4** Qdrant | ai-service + bat | ✅ 已修 | A/B/C/D 全做；實機驗證 11/11 + 10/10（含完整恢復情境） | ✅ 真人實測（走真實 uvicorn + 瀏覽器聊天） |
-| **5** 重啟聊天室逾時未顯示 toast | chat | ❌ 未修 | 真人實測重現（2026-07-27） | 修法決策 + 修復 + 重新實測 |
-| **6** 編輯頁缺 id 靜默轉首頁 | lobby | ❌ 未修 | 真人實測重現（2026-07-27） | 修法決策 + 修復 + 重新實測 |
-| **7** 「編輯」選單鍵盤按不動 | lobby | ❌ 未修 | 真人實測重現（2026-07-27，僅編輯選項；刪除選項同結構未實測） | 修法決策 + 修復 + 重新實測（兩處） |
-| **8** config 失敗後未捕捉例外 | lobby | ❌ 未修 | 真人實測重現（2026-07-27） | 修法決策 + 修復 + 重新實測，並回頭確認 7.5 是否也曾觸發 |
+| **5** 重啟聊天室逾時未顯示 toast | chat | ✅ 已修 | 真人實測重現＋控制流程重現腳本＋build 13 modules＋Playwright 回歸測試 9.1 | 無（若要再補一輪真人肉身測試，由使用者決定） |
+| **6** 編輯頁缺 id 靜默轉首頁 | lobby | ✅ 已修 | 真人實測重現＋build 19 modules＋openspec 2/2＋Playwright 回歸測試 9.2 | 無（同上） |
+| **7** 「編輯」選單鍵盤按不動 | lobby | ✅ 已修（兩處） | 真人實測重現（編輯）＋keydown 邏輯重現腳本 2/2＋build 19 modules＋Playwright 回歸測試 9.3 | 無（同上，尤其可及性主觀體感建議真人複測） |
+| **8** config 失敗後未捕捉例外 | lobby | ✅ 已修 | 真人實測重現＋控制流程重現腳本＋build 19 modules＋openspec 2/2＋Playwright 回歸測試 9.4 | 無（同上） |
 
 **已改動但尚未 commit 的檔案**（四個前端與 ai-service 各自是獨立的巢狀 git repo）：
 - `persona-nexus-character/src/create.js`、`src/edit.js`
@@ -1182,6 +1368,36 @@ new file mode 100644                    ← 新檔案，不是修改
 
 ### Bug 5：重啟聊天室時「建立新聊天室」步驟逾時失敗，不會顯示 toast，卡在懸浮層
 
+> ### ✅ 已修復（2026-07-27）
+>
+> **改動**：`persona-nexus-chat/src/chat.js:599-602`，把逾時失敗的 `return` 改成 `throw`，
+> 讓這條路徑統一走到外層 `catch`（第 615-619 行）：
+>
+> ```js
+> if (!conversation) {
+>   // 建立失敗或超時：丟給外層 catch 統一處理（toast + 解除懸浮層），
+>   // 不要在這裡 return——否則永遠走不到 catch，toast 架構上不可能顯示。
+>   throw new Error('聊天室建立失敗，請重新整理頁面再試');
+> }
+> ```
+>
+> 沿用《前端網頁debug_task_checklist.md》原記載的修法建議（DRY：不另外維護第二套
+> 「懸浮層 vs. toast」失敗呈現邏輯），`catch` 區塊本來就會用 `error.message` 組 toast
+> 文字，所以錯誤文字沿用同一句，使用者會同時看到 toast「重啟失敗：聊天室建立失敗，
+> 請重新整理頁面再試」與 `hideInitializing()` 解除懸浮層、重新啟用輸入框。
+>
+> **驗證狀態**：
+> - ✅ `node --check`：語法正確
+> - ✅ 用 Node 完整重現修復後的控制流程（`pollForConversation` 回傳 `null`）：
+>   `toastCalled: true`、`hideInitializing called: true`（輸入框會被重新啟用），
+>   與修復前的驗證腳本（`toastCalled: false`）對照，證實這條路徑現在確實會走到 catch
+> - ✅ `npm run build` 通過（13 modules，chat 是完整多入口建置，涵蓋本次改動）
+> - ✅ **2026-07-27 已完成瀏覽器回歸測試**（Playwright 自動化無頭 Chromium，非真人肉身操作，
+>   見文件開頭「一句話現況」的說明）：用 `page.route()` 攔截建立聊天室的輪詢請求回 503
+>   （與逾時走同一個 `return null` 分支），實測 toast 正確顯示「重啟失敗: 聊天室建立失敗，
+>   請重新整理頁面再試」、3.5 秒後自動消失、懸浮層解除、輸入框恢復可用，不需整頁重新整理。
+>   對應《前端網頁手動測試task.md》第九階段 9.1。
+
 - **服務**：`persona-nexus-chat`
 - **檔案**：`src/chat.js:599-603`（`restartBtn` click handler 內「步驟 2：建立新聊天室」）
 - **嚴重度**：中——只在使用者重啟聊天室、且後端剛好在「建立新聊天室」這一步失敗/逾時時觸發，
@@ -1212,9 +1428,75 @@ new file mode 100644                    ← 新檔案，不是修改
   `throw new Error('聊天室建立失敗，請重新整理頁面再試')`），讓這條路徑統一走到 catch，
   同時顯示 toast 與呼叫 `hideInitializing()`，行為與其他失敗路徑一致（DRY：不用維護
   兩套「懸浮層 vs. toast」的失敗呈現邏輯）。
-- **驗證狀態**：✅ 2026-07-27 真人瀏覽器實測重現（見《前端網頁手動測試task.md》5.6）。❌ 未修復。
+- **驗證狀態**：✅ 2026-07-27 真人瀏覽器實測重現（見《前端網頁手動測試task.md》5.6）。
+  ✅ 已修復（見上方「已修復」區塊），✅ 2026-07-27 已完成 Playwright 自動化瀏覽器回歸測試
+  （見上方「已修復」區塊末段與《前端網頁手動測試task.md》9.1）。
+
+### 🔍 修復前重新核對（2026-07-27，開始修復前）
+
+**結論：根因確認成立，程式碼與上方記載逐字相符，無漂移。**
+
+讀取現行 `persona-nexus-chat/src/chat.js:574-621`（`restartBtn` click handler）與
+`chat.js:225-276`（`pollForConversation()`），確認：
+- 第 597-603 行與上方記載逐字相同，`if (!conversation) { showInitializing(...); return; }` 仍在。
+- `pollForConversation()` 的三個失敗分支（503／非預期狀態碼／輪詢逾時，第 261、266、275 行）
+  全部 `return null`，全函式**沒有任何 `throw`**，確認逾時只會產生 falsy 回傳值，不會拋例外。
+
+用 Node 完整重現 `chat.js:574-621` 的控制流程（`pollForConversation` 換成回傳 `null` 的
+stub，其餘邏輯逐字照抄），實際執行後：
+
+```
+toastCalled: false
+hideInitializing (正常結束路徑) called: false
+```
+
+證實 `return`（chat.js:602）確實不會被外層 `try/catch`（:576/:615）攔截，`catch` 區塊
+（含第 617 行的 `showToast()`）在這條路徑上**架構上不可能執行到**，與原記載完全吻合。
+不需修改重現腳本即可驗證，過程未啟動任何服務。
 
 ### Bug 6：編輯頁未帶 `?id=` 參數時，lobby 路由 gate 靜默轉向回首頁，沒有任何錯誤提示
+
+> ### ✅ 已修復（2026-07-27）
+>
+> **改動**：`persona-nexus-lobby/src/main.js`，把 `/my-characters/edit` 拆成獨立分支，
+> 缺 `id` 時不再落到通用的「無法辨識路徑」fallback，而是先回首頁、再顯示明確錯誤訊息：
+>
+> ```js
+> if (pathname === '/my-characters/edit') {
+>   if (params.get('id')) {
+>     const { loadCharacterEditPage } = await import('./character-edit.js');
+>     await loadCharacterEditPage(params.get('id'), { replace: true });
+>     return;
+>   }
+>   // 已知路徑但缺少必要的 id 參數：不要靜默轉向，顯示訊息後再回首頁
+>   // （在 loadHomePage() 之後才顯示，這樣抓到的是 home.html 自帶的
+>   // #message-box，不會在 body 上留下第二個重複 id 的訊息框）
+>   await loadHomePage();
+>   history.replaceState({ page: 'home' }, '', '/');
+>   showMessage('error', '❌ 缺少角色 ID，請從「我的角色」清單進入編輯頁。', 4000);
+>   return;
+> }
+> ```
+>
+> **順序刻意選在 `loadHomePage()` 之後才呼叫 `showMessage()`**：`home.html` 樣板自帶
+> `<div id="message-box">`（`home.js:3, 81` 已在用），若在 `loadHomePage()` 之前呼叫，
+> `message-utils.js` 的 `getMessageBox()` 會因為當下抓不到既有的 `#message-box` 而在
+> `document.body` 上另外新建一個，造成畫面上出現兩個重複 `id` 的訊息框——這正是「調查／
+> 修復中順帶發現」第 2 項提到的同型結構問題，這裡刻意避開，不多引入一個新案例。
+>
+> **規格已先行更新**（SOP 貫穿原則 #6）：`openspec/specs/lobby-ui/spec.md` 在〈路由還原〉
+> 需求新增「訪問編輯頁但缺少必要的 id 參數」Scenario，與既有「導向無法辨識的路徑」
+> Scenario 並列且說明差異（已知路徑缺參數 vs. 完全無法辨識）。`openspec validate --all` 2/2 全綠。
+>
+> **驗證狀態**：
+> - ✅ `node --check`：語法正確
+> - ✅ `npm run build` 通過（19 modules，lobby 是完整多入口建置，涵蓋本次改動）
+> - ✅ `openspec validate --all` 2/2 全綠
+> - ✅ **2026-07-27 已完成瀏覽器回歸測試**（Playwright 自動化無頭 Chromium）：訪問
+>   `http://localhost:8080/my-characters/edit`（不帶 `id`），實測落地首頁、正確顯示
+>   「❌ 缺少角色 ID，請從「我的角色」清單進入編輯頁。」、3 秒內自動隱藏、Console 無異常，
+>   且未出現重複 `#message-box` 的副作用；對照組（帶正確 `id`）仍正常運作。
+>   對應《前端網頁手動測試task.md》第九階段 9.2。
 
 - **服務**：`persona-nexus-lobby`（根因）／`persona-nexus-character`（受影響但自身邏輯正確）
 - **檔案**：`persona-nexus-lobby/src/main.js:68`（`restoreRouteFromUrl()`）
@@ -1251,9 +1533,68 @@ new file mode 100644                    ← 新檔案，不是修改
 - **可能修法（待使用者拍板，未動手）**：讓 `main.js` 的 fallback 邏輯區分「完全無法辨識的
   路徑」與「已知路徑但缺少必要參數」兩種情況，後者應先顯示訊息（例如複用
   `message-utils.js` 的 `showMessage`）再導頁，而非靜默轉向。
-- **驗證狀態**：✅ 2026-07-27 真人瀏覽器實測重現（見《前端網頁手動測試task.md》6.1）。❌ 未修復。
+- **驗證狀態**：✅ 2026-07-27 真人瀏覽器實測重現（見《前端網頁手動測試task.md》6.1）。
+  ✅ 已修復（見上方「已修復」區塊），✅ 2026-07-27 已完成 Playwright 自動化瀏覽器回歸測試
+  （見上方「已修復」區塊末段與《前端網頁手動測試task.md》9.2）。
+
+### 🔍 修復前重新核對（2026-07-27，開始修復前）
+
+**結論：根因確認成立，程式碼與上方記載逐字相符，無漂移。**
+
+讀取現行 `persona-nexus-lobby/src/main.js` 全檔（134 行）確認：
+- 第 68 行 `if (pathname === '/my-characters/edit' && params.get('id'))` 與記載相同，
+  仍要求 `id` 為真值才進入編輯頁分支。
+- 第 89-91 行「其餘（含 `/` 本身與任何無法辨識的路徑）一律回首頁」的 fallback
+  （`await loadHomePage(); history.replaceState(...)`）與記載相同，中間沒有任何
+  區分「已知路徑缺參數」與「完全無法辨識路徑」的邏輯，也沒有呼叫
+  `message-utils.js` 顯示任何提示。
+確認 `params.get('id')` 為 `null`（URL 無 `id` 查詢參數時 `URLSearchParams.get()`
+的標準回傳值）在 JS 中即為 falsy，`&&` 短路後整個 if 判斷為 false，直接落到
+第 89 行的 fallback——這是 JS 語言規格層級的行為，非推測。
 
 ### Bug 7：角色卡片「⋮」選單「編輯」選項無法用鍵盤（Enter/Space）觸發
+
+> ### ✅ 已修復（2026-07-27，兩處都修）
+>
+> **改動**：`my-character.js:60-77`（編輯選項）與 `conversation-history.js:18-33`
+> （刪除選項）都補上 `keydown` 監聽器，判斷 `Enter`／`Space` 時呼叫與 `click` 相同的
+> 處理函式（抽成具名函式 `activateEditOption()`/`activateDeleteOption()`，`click` 與
+> `keydown` 共用，避免複製一份邏輯）：
+>
+> ```js
+> editOption.addEventListener('click', activateEditOption);
+> // <div tabindex="0"> 不像原生 <button> 會在 Enter/Space 自動觸發 click，需自行補上
+> editOption.addEventListener('keydown', (e) => {
+>   if (e.key === 'Enter' || e.key === ' ') {
+>     e.preventDefault();
+>     activateEditOption();
+>   }
+> });
+> ```
+>
+> **選了「補 keydown」而非「改用原生 `<button>`」這個備案**：`style.css:279-293` 有一條
+> 全域 `button {}` 規則（綠底、粗體、`padding: 12px 24px`），`.conversation-menu-item`
+> 目前只覆蓋 `padding`/`color`/`font-size`/`cursor`/`transition`，沒有覆蓋
+> `background-color`/`border`/`font-weight`，若改用 `<button>` 會被全域樣式污染，
+> 需要額外補一批 CSS override 才能維持原本外觀，且視覺結果無法在目前環境下用瀏覽器
+> 覆核。補 `keydown` 純粹是行為層修法，零 CSS 風險，範圍最小。
+>
+> **不需要改規格**：`lobby-ui/spec.md:151`（刪除選項的鍵盤焦點管理 Scenario）本來就寫著
+> 「鍵盤使用者可直接按 Enter 確認」——這是既有規格早就承諾、但實作沒做到的行為，
+> 這次修復是讓程式碼補上規格已經要求的行為，不是新增或變更可觀察行為，不觸發 SOP
+> 貫穿原則 #6。
+>
+> **驗證狀態**：
+> - ✅ `node --check`：兩檔語法正確
+> - ✅ 用最小 DOM stub 逐字複製修復後的 `keydown` 判斷邏輯實測：
+>   `Enter`／`Space` 觸發 2/2，`Tab`／其餘按鍵不觸發（0 次），`preventDefault()` 只在
+>   觸發時呼叫（2 次）
+> - ✅ `npm run build` 通過（19 modules，lobby 是完整多入口建置，涵蓋本次改動）
+> - ✅ `openspec validate --all` 2/2 全綠（未變更 spec，確認沒有連帶弄壞既有規格）
+> - ✅ **2026-07-27 已完成瀏覽器回歸測試**（Playwright 自動化無頭 Chromium），兩處、
+>   Enter 與 Space 共 4 條路徑全過：編輯選項開選單後焦點正確落在「編輯」，Enter／Space
+>   皆成功進入編輯頁；側邊欄刪除選項（**首次實測**）開選單後焦點正確落在「刪除」，
+>   Enter／Space 皆正確跳出 `confirm()` 對話框。對應《前端網頁手動測試task.md》第九階段 9.3。
 
 - **服務**：`persona-nexus-lobby`
 - **檔案**：`src/my-character.js:60-69`（編輯選項）；同一套寫法也出現在
@@ -1286,10 +1627,84 @@ new file mode 100644                    ← 新檔案，不是修改
   2. 改用原生 `<button>` 取代 `<div tabindex="0">`（更符合「最低能力原則」，順便拿到瀏覽器
      原生的鍵盤等效行為與內建的可及性語意，不用自己補）
 - **驗證狀態**：✅ 2026-07-27 真人瀏覽器實測重現「編輯」選項（見《前端網頁手動測試task.md》
-  6.3）。「刪除」選項（`conversation-history.js`）**未實測**，僅依程式碼結構判斷同樣有問題，
-  留待第七階段對話歷史測試時一併確認。❌ 未修復。
+  6.3）。「刪除」選項（`conversation-history.js`）當時**未實測**，僅依程式碼結構判斷同樣有問題。
+  ✅ 已修復（見上方「已修復」區塊，兩處都修），✅ 2026-07-27 已完成 Playwright 自動化瀏覽器
+  回歸測試（見上方「已修復」區塊末段與《前端網頁手動測試task.md》9.3）——「刪除」選項首次
+  實測，Enter/Space 皆正確跳出 `confirm()`。
+
+### 🔍 修復前重新核對（2026-07-27，開始修復前）
+
+**結論：根因確認成立，程式碼與上方記載逐字相符，無漂移；「刪除」選項仍維持未實測狀態，
+不升格為已證實。**
+
+讀取現行 `persona-nexus-lobby/src/my-character.js:60-69`（編輯選項）與
+`conversation-history.js:18-22`（刪除選項）：
+- 兩處都是 `document.createElement('div')` + `setAttribute('tabindex', '0')`，
+  且**全檔案搜尋 `keydown`/`keyup` 無任何命中**——確認 lobby 全專案沒有任何程式碼
+  幫這兩個 `<div>` 補上鍵盤等效觸發邏輯。
+- 兩處各自只綁了一個 `addEventListener('click', ...)`，與記載逐字相同。
+
+依 WHATWG HTML 規格，Enter/Space 觸發 `click` 事件的自動等效行為（activation behavior）
+只定義在原生互動元素（如 `<button>`、`<a href>`）上；一般 `<div>` 加 `tabindex` 只讓它能
+被鍵盤移入焦點，不會取得這個自動等效行為，需要額外綁 `keydown` 才能補上——這不是本專案
+特有的臆測，是 HTML 標準行為。「編輯」選項已有 2026-07-27 真人瀏覽器實測佐證（見上方
+「驗證狀態」）；「刪除」選項因結構完全相同（同一套 `createElement('div')` +
+`tabindex` + 純 `click`），依 HTML 標準判斷會有同樣結果，但**仍未經真人操作驗證**，
+維持標記為未實測，不寫成已證實結論。
 
 ### Bug 8：lobby 的 `/api/config` 失敗時缺一個提前結束執行的判斷，導致後續對已清空 DOM 操作拋出未捕捉例外
+
+> ### ✅ 已修復（2026-07-27）
+>
+> **改動**：`persona-nexus-lobby/src/main.js` 整段初始化邏輯包成 `async function init()`，
+> `configLoadError` 分支顯示錯誤訊息後立刻 `return` 中止：
+>
+> ```js
+> if (configLoadError) {
+>   document.body.innerHTML = '<div ...>❌ 無法連線至服務器，請稍後重試。</div>';
+>   // body 已被整個換掉，後面的登入檢查、initSidebar() 都會操作已不存在的
+>   // DOM 節點（例如 #sidebar-container），必須在此中止，不能繼續往下執行。
+>   return;
+> }
+> ```
+>
+> **為什麼要包成函式**：`main.js` 是 `type="module"`（`index.html:28`），ES module 頂層
+> 不允許 `return`，這是唯一能提前結束的方式。包函式之外的邏輯（登入檢查、`initSidebar()`、
+> `restoreRouteFromUrl()`、history 追蹤、`popstate` 監聽）逐字保留，只是整體往內縮一層，
+> 沒有變更任何其他行為。
+>
+> **不需要改規格**：`openspec/specs/lobby-ui/spec.md:83, 92`〈頁面初始化與設定載入〉
+> 早就寫著「若探測失敗，系統 MUST 顯示連線失敗訊息並停止後續初始化」——這次修復是讓
+> 程式碼補上規格本來就要求、但實作沒做到的行為，跟 Bug 7 是同一種情況（規格先於程式碼
+> 存在），不觸發 SOP 貫穿原則 #6。
+>
+> **副作用揭露（不自行篩選，如實記錄）**：修復前，`configLoadError` 為真且**未登入**時，
+> 原本的程式碼會先寫入錯誤訊息，接著仍執行到第 40 行的 `if (!userId)` 分支並
+> `window.location.href` 導向 `/login/`，等於錯誤畫面一閃即逝、隨即跳轉登入頁。
+> 修復後這條路徑會停在錯誤畫面，不再跳轉登入頁。這是原本程式碼從未刻意設計、也沒有
+> 出現在任何規格或測試記錄裡的偶然行為，修復後的「停在錯誤畫面」與規格
+> 「停止後續初始化」的字面要求更相符，但視為行為變動的一部分，在此如實揭露。
+>
+> **順帶觀察到、與本次修復無關的建置警告**：`npm run build` 這次多印出一行
+> `[INEFFECTIVE_DYNAMIC_IMPORT] src/home.js is dynamically imported ... but also
+> statically imported`。追查後確認 `home.js` 在 `main.js` 頂部就有靜態 `import`（供
+> `else` 分支的 fallback 使用），`popstate` 監聽器內又對同一個檔案做了一次動態
+> `import()`（本次未改動這行），這個靜態＋動態重複匯入的結構在改動前就已存在；
+> 這次只是把外層程式碼包進 `init()` 函式，改變了 Vite 對可達性的分析方式，才讓原本
+> 沒被標記的重複匯入被印出警告。純屬建置期的最佳化提示，不影響任何執行期行為，
+> 也不是本次修復引入的新問題，依範圍限制本次未處理。
+>
+> **驗證狀態**：
+> - ✅ `node --check`：語法正確
+> - ✅ 用 Node 重現 `init()` 精簡版控制流程（`loadConfig()` 拋錯模擬 config 探測失敗）：
+>   `initSidebarCalled: false`，證實提前 `return` 確實擋下了 `initSidebar()` 呼叫
+> - ✅ `npm run build` 通過（19 modules，lobby 是完整多入口建置，涵蓋本次改動）
+> - ✅ `openspec validate --all` 2/2 全綠
+> - ✅ **2026-07-27 已完成瀏覽器回歸測試**（Playwright 自動化無頭 Chromium）：分別對
+>   `/my-characters/create`（原觸發路徑）與 `/`（回頭補測 7.5）封鎖 `/api/config`，兩者畫面
+>   皆正確整頁替換為錯誤文字，且 Console 都**沒有**出現 `TypeError: Cannot set properties
+>   of null`，也沒有任何未捕捉例外——確認 7.5 當時的疑慮不成立。對應《前端網頁手動測試
+>   task.md》第九階段 9.4。
 
 - **服務**：`persona-nexus-lobby`
 - **檔案**：`src/main.js:21-23`（`configLoadError` 分支）、`:43`（`initSidebar()` 呼叫點）
@@ -1328,7 +1743,32 @@ new file mode 100644                    ← 新檔案，不是修改
 - **可能修法（待使用者拍板，未動手）**：在 `configLoadError` 分支顯示錯誤訊息後，確保後續
   程式碼不再執行（例如把整段初始化邏輯包成一個函式，`configLoadError` 為真時提早 `return`
   略過剩餘的登入檢查與 `initSidebar()` 呼叫）。
-- **驗證狀態**：✅ 2026-07-27 真人瀏覽器實測重現（Console 截圖）。❌ 未修復。
+- **驗證狀態**：✅ 2026-07-27 真人瀏覽器實測重現（Console 截圖）。
+  ✅ 已修復（見上方「已修復」區塊），✅ 2026-07-27 已完成 Playwright 自動化瀏覽器回歸測試
+  （見上方「已修復」區塊末段與《前端網頁手動測試task.md》9.4）。
+
+### 🔍 修復前重新核對（2026-07-27，開始修復前）
+
+**結論：根因確認成立，程式碼與上方記載逐字相符，無漂移。**
+
+讀取現行 `persona-nexus-lobby/src/main.js:1-134` 全檔與 `sidebar.js:39-46`：
+- `main.js:21-23` 的 `configLoadError` 分支與記載相同，設完 `document.body.innerHTML`
+  後**沒有 `return` 或任何中止語句**，往下第 37 行 `getCurrentUserId()`、
+  第 39-43 行的 if/else 都會照常執行。
+- `sidebar.js:39` 的 `initSidebar()` 第 43 行
+  `const sidebarContainer = document.getElementById('sidebar-container');`，
+  第 46 行 `sidebarContainer.innerHTML = html;`——`#sidebar-container` 是原本
+  `<body>` 底下的元素，`configLoadError` 分支已把整個 `body.innerHTML` 換掉，
+  此時 `getElementById('sidebar-container')` 必為 `null`，與記載一致。
+
+用 Node 直接執行 `sidebarContainer = null; sidebarContainer.innerHTML = '...'`：
+
+```
+TypeError: Cannot set properties of null (setting 'innerHTML')
+```
+
+與《前端網頁手動測試task.md》記錄的 Console 錯誤文字**逐字相同**，確認因果鏈成立，
+不是巧合或另一個原因造成的類似錯誤。
 
 ---
 
@@ -1343,9 +1783,17 @@ new file mode 100644                    ← 新檔案，不是修改
 - [x] 把本輪調查修正掉的三項錯誤描述同步回《前端網頁手動測試task.md》文末「發現的新問題」
       （該文件目前仍記載著舊版說法）：第 1 項要補上 `edit.js` 的兩處、第 4 項要拿掉
       「蓋掉錯誤訊息」、第 3 項要拿掉「連線池快取失效連線」。
-- [ ] **新增**：第 5～8 項問題目前只記錄現象與根因，尚未進入修復。是否修復、優先順序、修法
-      為何，留待使用者另開規劃決定，屆時比照第 1～4 項的流程：先確認修法 → 改規格（如涉及
-      可觀察行為變更）→ 改程式碼 → 回《前端網頁手動測試task.md》對應測項重新實測。
+- [x] 第 5～8 項已於 2026-07-27 完成修復前根因重新核對＋程式碼修復（比照第 1～4 項流程：
+      先重新核對根因 → 改規格（Bug 6 新增 Scenario；Bug 7／8 確認規格早已要求、程式碼補上
+      即可，不需改規格）→ 改程式碼 → `node --check`／控制流程重現腳本／`npm run build`／
+      `openspec validate` 全數通過）。
+- [x] 第 5～8 項已於 2026-07-27 完成瀏覽器回歸測試（見《前端網頁手動測試task.md》第九階段
+      9.1～9.4，四項全過）。啟動方式：Docker Desktop + PowerShell `Start-Process` 逐一啟動
+      9 個 dev server（`start-all-services.bat` 內建的 `start cmd /k` 在自動化環境下失敗，
+      改用此法），用 Playwright 驅動無頭 Chromium 實測。
+- [ ] **新增**：本輪是 **Playwright 自動化瀏覽器測試**，不是真人肉身操作（差異見上方「一句話
+      現況」）。若使用者需要針對可及性等主觀體感另外安排一輪真人複測，可直接沿用第九階段
+      9.1～9.4 的測項清單。
 
 ---
 
@@ -1386,6 +1834,23 @@ new file mode 100644                    ← 新檔案，不是修改
    `chat-service/src/lib/serviceClient.js:88` 自己設了 5 秒 timeout，逾時同樣被視為不健康。
    另外本服務所有端點都是 `async def` 卻呼叫同步阻塞的 Qdrant/Ollama 程式碼，
    這是既有的全服務性問題，**不在本次範圍**，未動。
+7. **`persona-nexus-chat` 的 `protagonistModal.js` 有一段實際上不可能被觸發的防禦性 guard**
+   （2026-07-27 補測《前端網頁手動測試task.md》5.4「對話室未就緒時開啟彈窗」時發現）
+   `openModal()` 開頭的 `if (!conversationId) { showToast('聊天室尚未就緒'); return; }`，
+   用 `page.route()` 延遲對話室就緒輪詢、在「conversationId 尚未設定」的空窗期分別用滑鼠
+   `.click()`、鍵盤 `focus()+Enter`、原生 `btn.click()` 三種方式觸發 `#protagonistBtn`，
+   結果：
+   - 滑鼠 `.click()`：`.initializing-overlay`（`style.css:439-450`，`z-index:1000`，
+     沒有 `pointer-events:none`）在對話室未就緒期間會完全覆蓋整個畫面，Playwright 判定按鈕
+     當下不可點擊而自動等待，等到的時候輪詢早已完成——**真人滑鼠在這個時間窗根本點不到
+     這顆按鈕**。
+   - 鍵盤 `focus()+Enter`／原生 `btn.click()`：兩者都繞開了 overlay 的視覺阻擋，但彈窗依然
+     沒開、也沒有跳出 toast。追查 `chat.js:624` 發現 `initProtagonistModal(...)`（掛上
+     `protagonistBtn` 的 `click` 監聽器）是在 `initializeChat()` 輪詢**成功之後**才呼叫——
+     對話室未就緒之前，這顆按鈕根本沒有綁定任何點擊事件，點了是純粹的 no-op。
+   結論：這段 guard 在目前的呼叫順序下是**實際上不可能被觸發到的防禦性程式碼**，不論滑鼠或
+   鍵盤都沒有機會走到它。不影響任何實際功能（使用者感覺不到差異），是否要一併整理掉留給
+   使用者判斷，本次僅記錄，未動手改。
 
 ---
 
