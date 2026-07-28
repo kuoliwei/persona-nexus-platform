@@ -95,6 +95,126 @@
 > 沒有問題的原則（如 KISS/DRY/YAGNI/SSOT、WCAG、一致性與標準等，多數在本輪修復後已符合）
 > 不重複列出，稽核結論見對話記錄；這裡只放需要決策的部分。
 
+### 待勾選清單
+
+- [x] 代辦 A：`message-utils.js` body 級單例殘留，未隨 SPA 路由清除（lobby，前端）
+      → **已完成 2026-07-28（含瀏覽器實測 24/24 通過）**：change `lobby-shell-message-box`
+      （`persona-nexus-lobby/openspec/changes/lobby-shell-message-box/`）。
+      作法：`index.html` 靜態宣告外殼插座 `#shell-message-box`（`position: fixed`、
+      `z-index: 1200`、直屬 `<body>`），`message-utils.js` 新增 `showShellMessage()`，
+      側邊欄改用外殼插座；`getMessageBox()` **移除 `document.body.appendChild()`**，
+      找不到子頁插座時降級用外殼插座 + `console.warn`。
+      `npm run build` 與 `openspec validate --all` 皆通過。
+      **實測（Playwright 無頭 Chromium，經 Caddy 8080）24 項全過**，其中呼叫點 #1
+      （側邊欄刪除失敗，此前從未實測觸發過）確認：外殼訊息浮於畫面上方、
+      `document.body` 下**沒有**動態建立的 `#message-box`、全文件無重複 id、
+      聊天室 iframe 的 `y`/`height` 在訊息出現前後完全不變（未被擠壓）、
+      3 秒後自動隱藏、換頁後無殘留；手機版抽屜開啟時 `elementFromPoint` 命中訊息框本身
+      （z-index 1200 > 1100 驗證通過）。
+      ⚠️ 非真人肉身測試——無人類肉眼判斷、無真實螢幕報讀器。
+- [x] 代辦 B：`conversation-history.js:34` 缺 `autoHideMs`，與 `home.js` 不一致（lobby，前端）
+      → **已隨代辦 A 同批完成並實測**。
+      ⚠️ 原文寫 `conversation-history.js:33` 有誤，實際為**第 34 行**（33 行是 `console.error`）。
+      **注意 B 只能治標**——補 `autoHideMs` 僅讓訊息自動隱藏（`display:none`），
+      DOM 節點仍留在 body，A 的結構問題不因此解決，故兩者分別處理。
+      待決兩項的結論：**秒數統一為 3000**（`main.js` 的 4000 改為 3000）；
+      `my-character.js:42`「載入失敗」**維持不自動隱藏**並補上註解說明理由。
+      規則不是「一律 3 秒」，而是依訊息性質分兩類——
+      **一次性動作回饋**（訊息消失後畫面仍完整可用）3000ms 自動隱藏；
+      **狀態說明**（訊息在解釋一個持續存在的畫面狀態，消失後畫面會失去意義）不自動隱藏。
+      `my-character.js` 兩句訊息皆屬後者，因此不是規則的例外，而是規則的另一半。
+- [x] 代辦 C：Bug 7 補 `keydown` 而非改用原生 `<button>`（有正當理由，僅建議補寫進 spec/CLAUDE.md）
+      → **已完成 2026-07-28**：決策與 CSS 證據寫入 `persona-nexus-lobby/openspec/specs/lobby-ui/spec.md`
+      的〈共用選單定位工具〉需求，新增 Scenario「選單項目的鍵盤啟動」＋實作決策說明。
+      `openspec validate --all` 2/2 通過。
+- [x] 代辦 D：`rag_controller._raise_for_error()` 用字串關鍵字判斷 500/503（ai-service，後端）
+      → **已完成 2026-07-28**：change `typed-qdrant-errors` 實作完畢。
+      新增 `src/exceptions.py`（`QdrantUnavailableError`／`OllamaUnavailableError`）與
+      `src/http_errors.py`（共用 `raise_for_error()`），改依**例外型別**判斷 503/500，
+      移除 `_CONNECTION_ERROR_KEYWORDS` 與 `vector_store` docstring 中的隱性契約。
+      **實測推翻了原本的假設**：中文語系 Windows 上連線被拒的訊息是
+      `[WinError 10061] 無法連線，因為目標電腦拒絕連線。`，不含 `qdrant`/`connect`/`refused`
+      任一關鍵字——原本以為「矇對 503」，實際是**漏判成 500**。本輪等於修好一個既有缺陷。
+      **範圍依使用者裁示擴充**：Ollama 不可用也型別化為 503，且 `chat_controller` 的
+      `/generate`／`/summary` 一併接上（原本不論任何錯誤一律 500）。
+      另修好 `ensure_collection` 經 `create_collection()` bool 中介吞掉原始例外的問題，
+      並補上併發補建的冪等處理。實測 12 項情境全通過（含 Qdrant 停止/恢復、Ollama 不可用、
+      模型不存在回 500、400 驗證未被吃掉）。`openspec validate --all` 5/5 通過。
+- [x] 代辦 E：`rag_repository` 三處繞過 `vector_store` 封裝（ai-service，後端）
+      → **已完成 2026-07-28**：change `encapsulate-vector-store` 實作完畢。
+      `vector_store` 新增 `delete_by_filter()`／`scroll_points()`（參數為純字典），
+      7 處 `.client` 呼叫全部收斂，`rag_repository` 已不 import `qdrant_client` 任何型別，
+      4 處補丁式 `ensure_collection()` 移除（ensure 責任收進 `vector_store` 方法內部）。
+      ⚠️ 實地清點為 **4 個方法、7 個 `.client` 操作**（稽核記載的「三處」低估，多出
+      `get_conversation_data`；proposal 記為 8 處是把一個 ensure 也計入，範圍相同）。
+      最高風險項（`replace_protagonist_background` 的兩條件刪除）已實測驗證：
+      更新主角背景後**角色背景與角色性格完全未受影響**。
+      collection 缺失的 Bug 4 迴歸驗證改用「另起空 Qdrant 容器」的非破壞性作法——
+      正式 Qdrant 的 volume 內有使用者真實資料（114/46/12 筆），不可 `docker rm`。
+      接手用的前情提要：平台根目錄 `前情提要-ai-service架構修正.md`
+- [x] 代辦 F：《微服務架構實作spec.md》狀態碼表缺 503（文件補充）→ **已完成 2026-07-28**
+- [x] 代辦 G：`/health` 回應格式疑慮，建議 spec 補一句豁免（文件補充）→ **已完成 2026-07-28**
+- [x] 代辦 H：`chat_service`／`app.py` 不讀 `config.ollama.url`（ai-service，後端）
+      → **已完成 2026-07-28**：change `config-driven-ollama-host` 實作並實測完畢。
+      新增 `src/llm_client.py`（`ollama.Client(host=config.OLLAMA_URL)` 模組級單例），
+      `app.py` 預載與 `chat_service` 的 `generate_response`／`generate_summary` 三處
+      全部改走它；三處函式內的 `import ollama` 移除，全服務僅 `llm_client.py` 保留該匯入。
+      既有的 `except ConnectionError → OllamaUnavailableError` 包裝**一行未改**（如預期）。
+      **核心驗證通過**：`ollama.url` 改為 `http://localhost:19999` 重啟後，
+      `POST /api/v1/chat/summary` 回 **503**（變更前回 200），`/health` 的 `ollama_url`
+      顯示同一位址；反向測試設 `OLLAMA_HOST=19999` 但 config 正確時仍回 **200**
+      （環境變數已被忽略）；還原後 `/generate`／`/summary` 皆 200、RAG `/context` 正常、
+      預載日誌 `✅ 模型預載完成（2.5s）`。
+      ⚠️ **一個執行中的發現**：`/generate` 的 503 **不足以單獨證明本輪修正**——它會先做
+      RAG 檢索，由 `embedder`（本來就走 config）先拋錯。真正的證據是**不經 RAG 的
+      `/summary`**，以及預載日誌如實跟隨 config 失敗。已寫入 tasks 4.2.A 與 `test.http` H-1。
+      另實測補上一項原文件缺的事實：`ollama.Client(host=...)` **建構時不發起網路連線**，
+      故模組層級單例＋檔案頂部匯入不會讓「Ollama 未啟動」變成服務起不來的原因
+      （已寫成 spec scenario〈共用 client 的建立不成為啟動期依賴〉並實測：位址不可達時
+      服務 1 秒內開埠、`/health` 回 200）。
+      `config.json` 測試前備份、測後以檔案複製還原，SHA256 與測試前完全相同。
+      `openspec validate --all` 6/6 通過；delta 已同步回主 spec（本專案不用 `archive`）。
+      **不是稽核發現，是執行代辦 D 的手動測試時撞到的**：把 `config.json` 的 `ollama.url`
+      指向不存在的埠後，`POST /api/v1/chat/summary` 仍回 200——因為 `chat_service` 用的是
+      `ollama` 套件的**模組層級預設 client**（讀 `OLLAMA_HOST` 環境變數），不讀 config。
+      四個 Ollama 呼叫點中**只有 `embedder.py` 真的用 config 的值**；
+      `app.py:69` 預載、`chat_service.py:164/223` 生成與摘要都繞過。
+      **實害**：`/health` 與 `/rag/status` 都把 `config.OLLAMA_URL` 當權威值回報，
+      換 Ollama 位址時會出現「回報新位址、實際連 localhost」——監控說謊、排查被誤導。
+      而 `config.py:19` 用 `_require("ollama.url")` **強制**此鍵存在（缺鍵服務起不來），
+      證明這是實作缺陷而非設計取捨。
+      **修法**（已查證 `ollama` 0.6.2）：新增 `src/llm_client.py` 建立
+      `ollama.Client(host=config.OLLAMA_URL)` 單例，3 個呼叫點改用它。
+      連線失敗仍拋內建 `ConnectionError`，故代辦 D 建立的 503 包裝**不需修改**。
+      ⚠️ **刻意不接 `OLLAMA_TIMEOUT`**：套件預設「永不逾時」，改 300 秒會中斷長生成
+      （本機跑 `gemma-26b`），屬獨立的可靠性決策。
+      前置查證已完成：全平台無任何**生效中**的設定依賴 `OLLAMA_HOST`
+      （僅 `deploy/docker-compose.yml` 內的註解與 openspec 說明文字），前提成立。
+      接手用的前情提要：平台根目錄 `前情提要-ollama連結來源修正.md`
+
+### 🆕 執行代辦 A/B 時撞到的新問題
+
+**刪除失敗訊息的前綴重複＋裸露狀態碼** —— ✅ **已修（2026-07-28）**
+實測畫面上顯示的是「**刪除失敗: 刪除失敗: 500**」，成因是兩層各自加了一次前綴：
+`persona-nexus-lobby/src/api.js` `throw new Error(\`刪除失敗: ${response.status}\`)`，
+而 `src/conversation-history.js` 又寫 `\`刪除失敗: ${error.message}\``。
+**使用者表示此問題此前已遇過、當時決定先不處理。**
+
+**修法**（先寫進 delta spec 的〈錯誤訊息的層級責任〉需求再改碼）：
+`conversation-history.js` 呼叫 `api.js`，故**前者是最外層、後者是內層**。
+消除重複要**移除內層的動作名稱**而非外層的——外層才最接近使用者、知道使用者剛才在做什麼；
+斷網時 `error.message` 是瀏覽器產生的 `Failed to fetch`，最前面的「刪除失敗」
+是使用者唯一能得知是哪個動作出事的線索。
+因此 `conversation-history.js` 維持「刪除失敗: 」，`api.js` 的 `deleteConversation()`
+改與同檔的 `listMyCharacters()` 統一為 `error.message || \`HTTP ${response.status}\``
+（優先用後端回傳的原因，取不到才退回帶 `HTTP` 前綴的狀態碼，原本的裸露 `500` 一併解決）。
+實測：後端有回原因 → `刪除失敗: forced failure`；body 非 JSON → `刪除失敗: HTTP 500`。
+
+> ⚠️ **過程記錄**：本輪一度把層級判斷寫反（誤以為該移除外層的動作名稱，
+> 產出「error message: 刪除失敗: 500」），由使用者指出後更正。
+
+---
+
 ### 代辦 A：`message-utils.js` body 級單例殘留，未隨 SPA 路由清除（Bug 2 遺留）
 - **違反**：《前端系統設計原則》B 節「關注點分離 / 模組邊界」——body 級 UI 元素的生命週期
   沒有跟著 SPA 路由走，這正是 Bug 2 修復前 tooltip 犯的同一種錯誤。
@@ -106,6 +226,102 @@
   會留下一個不會自動隱藏、也不會在切頁時被清掉的錯誤訊息框。
 - **狀態**：checklist 本身已承認「未處理、留作已知限制」，依先前回饋（不能因為文件自己
   承認了就跳過不提），這裡正式列為代辦，不只是註記。
+
+#### 🔍 代辦 A 補充調查（2026-07-28，修法討論前的實地查證）
+
+> 本節為修法討論時實地重讀原始碼的結果。**有兩點修正了上方稽核記載的細節**，
+> 修法拍板前務必以本節為準。以下每一條都附可覆核的檔案與行號，無推測成分。
+
+**查證 1｜全專案共 5 個 `showMessage()`／`clearMessage()` 呼叫點（上方稽核只提到 2 個）**
+
+`grep -rn "showMessage\|clearMessage" src/ --include=*.js` 的完整結果：
+
+| # | 呼叫點 | 執行當下所在頁面 | 抓到哪個 `#message-box` | 有無 `autoHideMs` |
+|---|--------|-----------------|------------------------|------------------|
+| 1 | `conversation-history.js:34`（刪除對話失敗） | **任何頁面**（側邊欄貫穿全站） | 視當下頁面而定，見查證 3 | ❌ 無 |
+| 2 | `home.js:81`（無法獲取角色列表） | 首頁 | `home.html:8` 自帶 | ✅ 3000 |
+| 3 | `main.js:86`（缺角色 ID） | 首頁（**刻意**先 `loadHomePage()` 才顯示） | `home.html:8` 自帶 | ✅ 4000 |
+| 4 | `my-character.js:34`（載入角色清單中…） | 我的角色頁 | `my-character.html:8` 自帶 | ❌ 無（但由 #5 的 `clearMessage()` 收掉） |
+| 5 | `my-character.js:39/42`（清除／載入失敗） | 我的角色頁 | `my-character.html:8` 自帶 | ❌ 無（`:42` 失敗訊息持續顯示，屬該頁常駐錯誤狀態） |
+
+> ⚠️ **行號更正**：上方稽核原文寫的 `conversation-history.js:33` 實際為**第 34 行**
+> （第 33 行是 `console.error`）。本節一律以實測行號為準。
+
+**查證 2｜`chat.html`／`character-edit.html` 這兩個子頁「自己」不會呼叫 `showMessage()`——
+上方稽核記載的觸發前提不成立**
+
+`chat-page.js` 與 `character-edit.js` 兩支載入器全檔讀過，**都沒有 import
+`message-utils.js`、也沒有任何 `showMessage()` 呼叫**；兩者只做三件事：抓 html 樣板塞進
+`#content-area`、呼叫 `loadIframeWithToken()` 掛 iframe、推 history 狀態。
+`public/src/chat.html` 與 `character-edit.html` 兩個樣板本身也只有一個包 iframe 的 `<div>`
+（各 5 行），頁面內容其實是**另外兩個獨立的前端 app**（`/chat`、`/character`），
+它們有各自的訊息機制，與 lobby 的 `message-utils.js` 無關。
+
+→ 因此「幫這兩個子頁補 `<div id="message-box">` 插座」**無法解決代辦 A**：
+這兩頁根本沒有自己的訊息要顯示，補了插座也不會有人用它。
+
+**查證 3｜唯一真正會誤貼 body 的路徑，是側邊欄的 `conversation-history.js:34`**
+
+`index.html`（SPA 外殼）本身**沒有** `#message-box`（`grep -c` 結果為 0），
+`public/src/sidebar.html` 也**沒有**（同樣為 0）。外殼結構為：
+
+```
+<body>
+  ├── #sidebar-container   ← 側邊欄，殼的一部分，換頁不會被清掉
+  └── .main-content > #content-area   ← 換頁時只有這裡的內容被 innerHTML 換掉
+```
+
+側邊欄（含刪除對話按鈕）貫穿全站都在，所以 `conversation-history.js:34` 可能在任何頁面觸發：
+
+- 在**首頁／我的角色頁**觸發 → `getMessageBox()` 找到子頁自帶的插座 → 插進 `#content-area`
+  裡，換頁時會被一起清掉。**但因為沒傳 `autoHideMs`，切頁前會一直顯示**（代辦 B）。
+- 在**聊天室頁／角色編輯頁**觸發 → 找不到插座 → `document.body.appendChild()` 建 body 級
+  單例 → **換頁不會被清掉，且沒有 `autoHideMs`，會永久殘留**（代辦 A 的實際觸發路徑）。
+
+**查證 4｜Bug 6 的修復已經意識到這個陷阱並刻意迴避，但只解決了它自己那一處**
+
+`main.js:83-85` 有一段既有註解，直接寫明了這個 body 誤貼問題：
+
+```js
+// 已知路徑但缺少必要的 id 參數：不要靜默轉向，顯示訊息後再回首頁
+// （在 loadHomePage() 之後才顯示，這樣抓到的是 home.html 自帶的
+// #message-box，不會在 body 上留下第二個重複 id 的訊息框）
+await loadHomePage();
+history.replaceState({ page: 'home' }, '', '/');
+showMessage('error', '❌ 缺少角色 ID，請從「我的角色」清單進入編輯頁。', 4000);
+```
+
+→ 證明這個陷阱**在 Bug 6 修復時就已被發現**，當時採取的是「調整呼叫順序來閃避」的
+局部解法，沒有從 `message-utils.js` 本身根治，也沒有記進 checklist。
+這佐證了代辦 A 是**結構問題**而非單一疏漏：每個呼叫點都得自己記得閃避，才不會踩到。
+
+**查證 5｜`#message-box` 是常態排版元素，不是浮動提示**
+
+`style.css:295-316`：只有 `margin-bottom`／`padding`／`border-radius`／`font-size`／
+`text-align`／`display`，**沒有 `position: fixed`／`absolute`、沒有 `z-index`**。
+代表它會占用所在位置的版面空間、跟著內容排版走，不是浮在畫面上的 toast。
+→ 這也是為什麼它「掛到 body 最下方」時，視覺上會出現在頁面底部而非疊在畫面中央；
+與 Bug 2 的 tooltip（`position: fixed` + `z-index: 1000`，會蓋在畫面最上層）性質不同，
+**殘留的視覺表現不如 tooltip 明顯，但生命週期問題是同一型**。
+
+#### 💡 代辦 A／B 的修法方向（依上方查證重新評估，未動手）
+
+- **代辦 B 是獨立的單行修法**：`conversation-history.js:34` 補上 `autoHideMs`，
+  與 `home.js:81` 的 3000 對齊即可。這條無論代辦 A 怎麼修都該做，且能**大幅降低**
+  代辦 A 的實際傷害（訊息會自動隱藏，不再永久殘留在畫面上）——但注意這只是讓它
+  「看不見」，DOM 節點仍留在 body，結構問題還在。
+- **代辦 A 的修法選項**（尚未拍板）：
+  1. **側邊欄自帶插座**：在 `index.html` 外殼或 `sidebar.html` 補一個屬於殼層級的
+     訊息框容器，讓側邊欄的訊息有正當歸屬。需要處理與子頁自帶 `#message-box` 的
+     **id 重複**問題（`getMessageBox()` 用 `getElementById`，會抓到 DOM 中的第一個）。
+  2. **`message-utils.js` 內建清理**：改為每次顯示時先 `remove()` 舊節點，
+     或提供 `removeMessageBox()` 供路由切換時呼叫。但 lobby 目前**沒有集中的切頁收口**
+     （`main.js:55-92` 的 `restoreRouteFromUrl()` 只管初次載入，之後各頁各自
+     `import` + `pushState`），與 Bug 2 當初評估「根本修法成本高」的結論一致。
+  3. **維持現狀 + 只修代辦 B**：接受 body 級節點存在，靠 `autoHideMs` 讓它不可見。
+     成本最低，但《前端系統設計原則》B 節的違反仍在。
+- **已排除的修法**：「幫 `chat.html`／`character-edit.html` 補插座」——查證 2 已證明
+  這兩頁不會呼叫 `showMessage()`，補了也沒有作用。
 
 ### 代辦 B：`conversation-history.js:33` 的錯誤訊息缺 `autoHideMs`，與 `home.js` 不一致
 - **違反**：《前端系統設計原則》D 節「一致性與標準」——同一組件（錯誤訊息框）在不同呼叫點
