@@ -141,5 +141,5 @@ INF Requesting new quick Tunnel on trycloudflare.com...
 ## 附錄：相關檔案
 
 - [ngrok公開服務教學.md](ngrok公開服務教學.md)：舊方案，因 Windows Defender 持續誤判而棄用，保留供對照
-- [從零安裝教學.md](從零安裝教學.md)：新機器部署教學，第 10 節公網暴露可改參照本文件
+- [INSTALLATION.md](INSTALLATION.md)：新機器部署教學，第 10 節公網暴露可改參照本文件
 - [MICROSERVICES.md](MICROSERVICES.md#L105)：公網暴露那段仍寫的是 ngrok，待更新

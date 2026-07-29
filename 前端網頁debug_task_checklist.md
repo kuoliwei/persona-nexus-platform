@@ -191,6 +191,99 @@
       前置查證已完成：全平台無任何**生效中**的設定依賴 `OLLAMA_HOST`
       （僅 `deploy/docker-compose.yml` 內的註解與 openspec 說明文字），前提成立。
       接手用的前情提要：平台根目錄 `前情提要-ollama連結來源修正.md`
+- [x] 代辦 I：`raise_for_error()` 會把刻意的 `HTTPException`（如 400）改寫成 500
+      （ai-service，後端）→ **已完成 2026-07-29**：`src/http_errors.py` 的
+      `raise_for_error()` 最前面加一道 `isinstance(exc, HTTPException) → raise exc`，
+      既有 `HTTPException` 原樣放行（狀態碼與 detail 皆不變）。
+      **發現經過**：執行 change `add-llm-gateway-provider` 第 2 節（把
+      `GatewayUnavailableError` 加進 503 清單）時，順口聲稱「controller 會先攔
+      `HTTPException`」，回頭查證才發現只有部分端點如此。
+      **當時無實害**：`chat_controller` 兩個端點與 `rag_controller` 的三個查詢端點
+      都有 `except HTTPException: raise` 防護；而使用 `raise_for_error` 卻**沒有**該防護的
+      5 個 `rag_controller` 寫入端點（`initialize`／`cleanup`／`protagonist`／
+      `add_summary`／`delete_summaries`），內部剛好都沒有 `raise HTTPException`
+      （欄位驗證走 Pydantic，FastAPI 在進入函式前就回 422）。
+      **屬「沒有防護網」而非「已經壞掉」**：日後有人在那 5 個端點內加一行
+      `raise HTTPException(400, ...)`（看起來完全正確的寫法），會被靜默轉成 500，
+      且無任何錯誤或警告，要實際打端點看狀態碼才會發現。
+      **選定修法**：修共用函式而非在 5 處各加防護——共用函式應處理共用情境，
+      讓保護預設生效，新增端點不必再記得補防護。既有那幾處 `except HTTPException: raise`
+      保留無妨（結果相同），未一併移除以免擴大本次改動範圍。
+      **已驗證 8 種情境**：`HTTPException` 400/404/503 原樣放行；三種
+      `*UnavailableError` → 503；`RuntimeError`／`ValueError` → 500；
+      並確認「只有 `except Exception` 的寫法」現在也能正確保留 400（修改前為 500）。
+
+- [x] 代辦 J：`ollama.temperature`／`ollama.keepAlive` 未於啟動時驗證，與 spec 的 MUST
+      不符（ai-service，後端）→ **已修正 2026-07-29**（使用者裁示「照 spec 改」）
+      **事實**：主 spec〈生成 AI 回應〉Requirement 本文寫「Ollama 呼叫所需的設定值
+      **MUST 於服務啟動時（而非每次請求時）就已確認存在**」，其 Scenario 更明列
+      「缺 `ollama.temperature` → 服務於啟動時即拋 `ValueError` 並無法啟動」。
+      **實測不成立**：`config.py` 的 `Config` 類別只 `_require()` 了 `ollama.url`／
+      `model`／`timeout`／`embedModel`，**沒有 `temperature`，也沒有 `keepAlive`**。
+      刻意移除這兩個 key 後服務**照常啟動成功**，要到第一次聊天生成才拋 `ValueError`。
+      **⚠️ 澄清（容易誤解）**：這**不是**「值沒生效、改用 Ollama 預設值」——
+      `temperature` 確實有讀取並傳入 `options={"temperature": ...}`，缺 key 時也不會
+      安靜套用預設值。問題**只在檢查時機**：fail late（第一次請求回 500）而非
+      fail fast（啟動即失敗）。
+      **落差成因（git 追溯）**：`c3cdd47` 最初是 `config.get("ollama.temperature", 0.7)`
+      帶預設值；`d58a34c` 改為無預設值＋手動 `None` 檢查，但**做在 `chat_service` 的
+      請求路徑上**而非 `config.py`；`simplify-ai-service`（2026-07-25）把 `config.py`
+      改為「全面無預設值」時只涵蓋**本來就在 `Config` 類別裡**的欄位，這兩個從未在裡面
+      而被漏掉，spec 卻按「全面」的意圖撰寫。
+      **非新 change 引入**：`add-llm-gateway-provider`（2026-07-29）把這段讀取從
+      `chat_service` 原樣搬進 `llm_router`，行為一字未改。
+      **建議修法**：把兩個 key 加進 `config.py` 的 `Config` 類別（比照既有 `_require()`），
+      `llm_router` 與 `app.py` 預載處改讀 `config.OLLAMA_TEMPERATURE`／`OLLAMA_KEEP_ALIVE`。
+      ⚠️ **這是可觀察的行為變更**：缺 key 時從「能啟動、聊天才 500」變成「啟動即失敗」。
+      對正確設定的環境零影響（`config.example.json` 本來就有這兩欄），但動手前應先確認
+      各環境的 `config.json` 都有它們。
+      詳見 `ai-service/mistake.md` 的 N2。
+
+### 🆕 新專案（非 debug 代辦）：ai-service 接入 Capitolium LLM Gateway
+
+- [x] **change `add-llm-gateway-provider`（ai-service，後端）→ 程式碼完成 2026-07-29，
+      待真實 Virtual Key 才能收尾**
+
+  **背景**：合作方（Capitolium LLMOps 平台）要我們把 persona-nexus 部署到他們的主機，
+  AI 推論走他們的 LLM Gateway（OpenAI 相容 API）。接入指南是他們提供的平台根目錄
+  `app-integration.md`。**那台機器不會安裝 ai-service 專用的本機 Ollama**。
+
+  **做法**：`config.json` 新增 `llm.provider`（`"ollama"`｜`"gateway"`，必填）——
+  本機開發用 ollama、部署到對方主機用 gateway，同一份程式碼、不同機器填不同設定。
+  新增 `src/llm_router.py`（統一入口＋分流＋降級）、`src/llm_gateway_client.py`
+  （429 指數退避）、`GatewayUnavailableError`。`chat_service` 兩處生成改走 router，
+  不再持有任何 Ollama 專屬知識。`/health`、`/rag/status` 新增 `llm_provider` 欄位。
+
+  **關鍵設計**：Gateway 暫時不可用（連線失敗／5xx／429 重試用盡）→ 自動降級回本機
+  Ollama；但 **401/403 刻意不降級**——那是設定錯誤，靜默降級會讓「Gateway 從未真正
+  接通」被完全掩蓋（所有請求看似成功、實際全走本機模型）。
+
+  **驗證（不需真 Key）**：新增三支腳本共 **55 項全通過**——
+  `verify_config_validation.py`（19）、`verify_gateway_client.py`（15）、
+  `verify_llm_router.py`（21）。後兩者在本機起**假 Gateway**（`http.server`）回各種
+  狀態碼，`openai` SDK 走完整真實 HTTP 路徑，故錯誤型別／重試次數／退避間隔都是實際
+  行為；Ollama 則用假物件**記錄有沒有被呼叫**，這是分辨「誰生成的」的唯一證據。
+  另於執行中的服務實測 `/summary`（4.3s）、`/generate`（20.4s，走完整 RAG）、
+  三個 400 驗證情境。
+
+  **⚠️ 三個實測發現（已寫入 tasks.md／CONFIG.md）**：
+  1. `openai` SDK **內建 `max_retries=2`**，不關掉會與自訂退避疊加成 15 次請求——
+     正是 `app-integration.md` 明令要防止的自我 DDoS。已設 `max_retries=0`。
+  2. `openai.OpenAI(api_key=None)` **建構當下就拋錯**（與 `ollama.Client` 不同），
+     故 gateway client 必須條件式建立，否則本機開發者一 import 就炸。
+  3. **`app-integration.md` 第 28 行與實測不符**：它說「SDK 會自動補
+     `/v1/chat/completions`」，但實測只補 `/chat/completions`。多半不影響
+     （LiteLLM 類 proxy 兩種都收），但**接通時若拿到 404，這是第一個該查的原因**，
+     處置是 `baseUrl` 改填 `http://<ip>:4000/v1`（程式碼不必動）。
+
+  **未完成（需真 Virtual Key）**：tasks 0.1／0.2／3.4／8.2／8.3／8.4／8.5——
+  即「真的打一次 Capitolium 確認接通」與 gateway 模式的端到端情境。
+
+  **另一個尚未開工的相關 change**：`add-embedding-gateway-provider`——RAG 的 embedding
+  目前仍**固定走本機 Ollama**。同事主機若完全不裝 Ollama，RAG 會整個失效，故該 change
+  是必要項而非選配。已完成規劃（proposal/design/spec/tasks 皆已 validate 通過），
+  尚未實作。⚠️ 它牽涉 Qdrant collection 的**向量維度**，且**刻意不做降級**
+  （同一 collection 混入不同維度的向量會讓相似度計算失去意義）。
 
 ### 🆕 執行代辦 A/B 時撞到的新問題
 
@@ -390,6 +483,80 @@ showMessage('error', '❌ 缺少角色 ID，請從「我的角色」清單進入
   `{error, message}` 而丟失結構」。理由合理，但 spec 文件本身沒有明文豁免健康檢查端點。
 - **建議**：若要讓這個例外站得住腳，建議在 spec 裡補一句「健康檢查端點的回應格式不受此節
   約束」，否則字面上仍不符合。
+
+### 代辦 I：`raise_for_error()` 會把刻意的 `HTTPException` 改寫成 500（代辦 D 的延伸缺口）
+
+- **違反**：《後端系統設計原則》D 節「契約設計 Design by Contract」——同代辦 D 的同一條原則，
+  但問題不同：代辦 D 修的是「503 vs 500 的判斷依據不穩定」，本項是「**刻意的狀態碼會被
+  共用函式覆蓋**」。
+- **事實**：`ai-service/src/http_errors.py` 的 `raise_for_error()` 只認三種
+  `*UnavailableError` 回 503，**其餘一律 500**。`HTTPException` 落入「其餘」——
+  一個刻意的 `raise HTTPException(400, "欄位不能為空")` 經過它會變成 **500**。
+- **為什麼嚴重**：400 與 500 的語意相反。400 是「你的請求有問題，改正後重送」，
+  500 是「我們壞了，重試也沒用」。誤標成 500 會讓呼叫端（chat-service）以為
+  ai-service 掛了而觸發重試/告警，但真正的問題是它自己少填了欄位——重試一萬次結果相同。
+- **發現時的實害**：**無**。兩組端點剛好互補：
+
+  | 端點 | 內部 `raise HTTPException` | `except HTTPException: raise` 防護 | 用 `raise_for_error` |
+  |---|---|---|---|
+  | `chat_controller` 兩個端點 | ✅（400 驗證） | ✅ | ✅ |
+  | `rag_controller` 的 `/context`、`/{id}/status`、`/status` | ✅ | ✅ | ❌（直接寫 500） |
+  | `rag_controller` 其餘 5 個寫入端點 | ❌ | ❌ | ✅ |
+
+  最後一組沒有防護但也沒有 `raise HTTPException`——欄位驗證走 Pydantic，
+  FastAPI 在進入函式前就回 422，根本不會進到 `try` 區塊。
+- **所以問題是「沒有防護網」而非「已經壞掉」**：日後有人在那 5 個端點內加一行
+  `raise HTTPException(400, ...)`，寫法看起來完全正確、也沒有理由懷疑，但會被靜默轉成
+  500，且無任何錯誤或警告——要實際打端點看狀態碼才會察覺。
+- **修法（已於 2026-07-29 完成）**：在 `raise_for_error()` 最前面加一道
+  `isinstance(exc, HTTPException) → raise exc`。
+  **選擇修共用函式而非在 5 處各加防護**的理由：共用函式應處理共用情境，讓保護預設生效，
+  新增端點不必記得補防護；在 5 處各寫一次等於把「記得加防護」的責任分散給每個未來的開發者。
+  既有的 `except HTTPException: raise` 保留不動（結果相同，不擴大改動範圍）。
+
+### 代辦 J：`ollama.temperature`／`keepAlive` 未於啟動時驗證，與 spec 的 MUST 不符
+
+- **違反**：《後端系統設計原則》D 節「契約設計」——規格寫的 MUST 與實作不符；
+  兼 A 節 SSOT（同一類設定分兩處、兩種時機驗證）。
+- **事實**：主 spec〈生成 AI 回應〉Requirement 本文寫著
+  「Ollama 呼叫所需的設定值 **MUST 於服務啟動時（而非每次請求時）就已確認存在**」，
+  其 Scenario〈Ollama 參數配置缺失〉更明列「缺 `ollama.temperature` →
+  服務於啟動時（`config.py` 模組載入階段）即拋出 `ValueError` 並無法啟動」。
+  **實測不成立**：`config.py` 的 `Config` 類別只 `_require()` 了
+  `ollama.url`／`model`／`timeout`／`embedModel` 四個，**沒有 `temperature`、
+  也沒有 `keepAlive`**。刻意移除這兩個 key 後服務**照常啟動成功**，
+  要到第一次聊天生成才拋 `ValueError`（對外 500）。
+- **⚠️ 最容易誤解的一點**：這**不是**「值沒生效、改用了 Ollama 自己的預設值」。
+  `temperature` 確實有被讀取並傳入 `options={"temperature": ...}`；缺 key 時也不會
+  安靜套用預設值，而是拋 `ValueError`。問題**只在檢查時機**——
+  fail late（第一次請求）而非 fail fast（啟動即失敗）。
+- **落差怎麼形成的（git 追溯）**：
+
+  | Commit | `ollama.temperature` 的讀法 |
+  |---|---|
+  | `c3cdd47`（最初） | `config.get("ollama.temperature", 0.7)`——經 `config_loader`，**帶預設值** |
+  | `d58a34c`（模型預載＋config 無預設值化） | 改為無預設值＋手動 `None` 檢查拋 `ValueError`，但**做在 `chat_service` 的請求路徑上**，未進 `config.py` |
+  | `simplify-ai-service`（2026-07-25） | `config.py` 改為「全面無預設值」，但只涵蓋**本來就在 `Config` 類別裡**的欄位；這兩個從未在裡面而被漏掉，spec 卻按「全面」的意圖撰寫 |
+
+- **非新 change 引入**：`add-llm-gateway-provider`（2026-07-29）把這段讀取從
+  `chat_service` 原樣搬進 `llm_router`，**行為一字未改**——本項是被那次搬移時的
+  核對動作「照出來」的，不是它造成的。
+- **修法（已於 2026-07-29 完成）**：使用者裁示「照 spec 改，spec 要的算合理」——
+  選擇讓**實作向規格靠攏**（啟動時驗證），而非把規格改成描述現況。理由：fail fast
+  本來就是本服務既定的 config 原則，規格的 MUST 沒問題，有問題的是實作沒跟上。
+  1. `config.py` 新增 `OLLAMA_TEMPERATURE`／`OLLAMA_KEEP_ALIVE`（走既有 `_require()`）
+  2. `llm_router._chat_via_ollama()` 改讀 `config.OLLAMA_*`，
+     **`_require_ollama_param()` 輔助函式整個移除**
+  3. `app.py` 的 `_preload_model()` 改讀 `config.*`，移除函式內的 `config_loader`
+     延遲匯入與兩處手動 `None` 檢查
+  4. 主 spec 三處同步：〈Config 慣例〉必填清單、〈Ollama 參數配置缺失〉Scenario
+     （補上原本漏掉的 `keepAlive`）、〈缺少必要設定，服務無法啟動〉Scenario
+- **已驗證**：設定完整時正常載入；刻意移除任一 key 時 `config.py` 載入即拋 `ValueError`
+  且訊息含 key 名稱。三支 `scripts/verify_*.py` 全通過——其中**兩支原本會失敗**，
+  因為它們的測試設定沒有這兩個 key，**這正是行為變更的正確訊號**，補上後通過。
+- **⚠️ 已確認的行為變更**：缺這兩個 key 時，服務從「能啟動、第一次聊天才 500」變成
+  「**啟動即失敗**」。對正確設定的環境零影響——`config.example.json` 與本機
+  `config.json` 本來就都有這兩個欄位（已確認）。
 
 ---
 
