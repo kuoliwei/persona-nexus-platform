@@ -12,6 +12,8 @@ REM (looks for a line starting "ai-service " in `conda env list`).
 REM Point this at python.exe inside that env, e.g.:
 REM set AI_PYTHON_EXE=C:\Users\yourname\.conda\envs\ai-service\python.exe
 
-REM Folder containing ngrok.exe (no trailing filename). If unset, answering
-REM "y" to the ngrok prompt just skips it with a message instead of failing.
-REM set NGROK_PATH=C:\Users\yourname\ngrok
+REM Only needed if cloudflared.exe isn't found on PATH or in the two common
+REM winget install locations that start-all-services.bat already checks
+REM (C:\Program Files\cloudflared and C:\Program Files (x86)\cloudflared).
+REM Folder containing cloudflared.exe (no trailing filename).
+REM set CLOUDFLARED_PATH=C:\Users\yourname\cloudflared

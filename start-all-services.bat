@@ -3,7 +3,7 @@ setlocal enabledelayedexpansion
 
 set PROJECT_ROOT=%~dp0
 
-REM Machine-specific overrides (CONDA_ACTIVATE, NGROK_PATH) live in this
+REM Machine-specific overrides (CONDA_ACTIVATE, CLOUDFLARED_PATH) live in this
 REM gitignored file - see start-config.local.bat.example. Skipped if absent.
 if exist "%PROJECT_ROOT%start-config.local.bat" call "%PROJECT_ROOT%start-config.local.bat"
 
@@ -49,7 +49,6 @@ curl -s -o nul http://localhost:11434/api/tags
 if errorlevel 1 (
     echo   Ollama not responding, starting...
     start "ollama" cmd /k "ollama serve"
-    timeout /t 3 /nobreak
 ) else (
     echo   Ollama already running.
 )
@@ -78,7 +77,6 @@ if errorlevel 1 (
     if errorlevel 1 (
         docker run -d --name qdrant --restart unless-stopped -p 6333:6333 -p 6334:6334 -v qdrant_storage:/qdrant/storage qdrant/qdrant
     )
-    timeout /t 3 /nobreak
 ) else (
     echo   Qdrant already running.
 )
@@ -87,19 +85,15 @@ echo.
 
 echo Starting auth-service (Port 3000)...
 start "auth-service" cmd /k "cd /d %PROJECT_ROOT%auth-service && npm run dev"
-timeout /t 2 /nobreak
 
 echo Starting user-service (Port 4000)...
 start "user-service" cmd /k "cd /d %PROJECT_ROOT%user-service && npm run dev"
-timeout /t 2 /nobreak
 
 echo Starting character-service (Port 5000)...
 start "character-service" cmd /k "cd /d %PROJECT_ROOT%character-service && npm run dev"
-timeout /t 2 /nobreak
 
 echo Starting chat-service (Port 6000)...
 start "chat-service" cmd /k "cd /d %PROJECT_ROOT%chat-service && npm run dev"
-timeout /t 2 /nobreak
 
 echo Starting ai-service (Port 6001)...
 REM AI_PYTHON_EXE's path can contain spaces (e.g. a Windows username with a
@@ -108,27 +102,21 @@ REM instead of a `cd /d ... &&` prefix inside the quoted cmd /k string - nesting
 REM a second quoted (space-containing) path inside that outer quoted string
 REM breaks cmd.exe's parser ("... was unexpected at this time").
 start "ai-service" /d "%PROJECT_ROOT%ai-service" cmd /k "set PYTHONIOENCODING=utf-8 && "%AI_PYTHON_EXE%" main.py"
-timeout /t 2 /nobreak
 
 echo Starting api-gateway (Port 8000)...
 start "api-gateway" cmd /k "cd /d %PROJECT_ROOT%api-gateway && npm run dev"
-timeout /t 2 /nobreak
 
 echo Starting persona-nexus-auth (Port 5173)...
 start "persona-nexus-auth" cmd /k "cd /d %PROJECT_ROOT%persona-nexus-auth && npm run dev"
-timeout /t 2 /nobreak
 
 echo Starting persona-nexus-character (Port 5174)...
 start "persona-nexus-character" cmd /k "cd /d %PROJECT_ROOT%persona-nexus-character && npm run dev"
-timeout /t 2 /nobreak
 
 echo Starting persona-nexus-lobby (Port 5175)...
 start "persona-nexus-lobby" cmd /k "cd /d %PROJECT_ROOT%persona-nexus-lobby && npm run dev"
-timeout /t 2 /nobreak
 
 echo Starting persona-nexus-chat (Port 5176)...
 start "persona-nexus-chat" cmd /k "cd /d %PROJECT_ROOT%persona-nexus-chat && npm run dev"
-timeout /t 2 /nobreak
 
 echo.
 
@@ -142,7 +130,6 @@ curl -s -o nul http://localhost:8080/
 if errorlevel 1 (
     echo   Caddy not responding, starting container...
     docker run -d --rm --name nexus-caddy -p 8080:8080 --add-host host.docker.internal:host-gateway -e NEXUS_UPSTREAM_HOST=host.docker.internal -v "%PROJECT_ROOT%deploy\Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2-alpine
-    timeout /t 3 /nobreak
 ) else (
     echo   Caddy already running.
 )
@@ -181,24 +168,44 @@ echo   Stop the proxy with: docker stop nexus-caddy
 echo.
 echo ============================================================================
 echo.
-set /p START_NGROK="Do you want to expose the app to the public internet with ngrok? (y/n): "
-if /i "%START_NGROK%"=="y" (
-    if defined NGROK_PATH (
-        echo.
-        echo Starting ngrok...
-        echo   NOTE: Always forward port 8080 - the Caddy port - not other ports!
-        echo.
-        start "ngrok" cmd /k "cd /d !NGROK_PATH! && .\ngrok.exe http 8080"
-        echo   ngrok will open in a new window. Check it for your public URL.
-        echo   URL changes every 2 hours on free plan
-        echo.
-    ) else (
-        echo.
-        echo   [SKIPPED] NGROK_PATH is not set. Copy start-config.local.bat.example
-        echo   to start-config.local.bat and set NGROK_PATH to the folder containing
-        echo   ngrok.exe, then re-run this script.
-        echo.
-    )
-)
+set /p START_TUNNEL="Do you want to expose the app to the public internet with Cloudflare Tunnel? (y/n): "
+if /i not "%START_TUNNEL%"=="y" goto :skip_tunnel
+
+REM Try PATH first (winget normally links cloudflared there), then a
+REM machine-specific override, then the two common winget install locations.
+set "CLOUDFLARED_EXE="
+where cloudflared >nul 2>&1
+if not errorlevel 1 set "CLOUDFLARED_EXE=cloudflared"
+
+if not defined CLOUDFLARED_EXE if defined CLOUDFLARED_PATH if exist "%CLOUDFLARED_PATH%\cloudflared.exe" set "CLOUDFLARED_EXE=%CLOUDFLARED_PATH%\cloudflared.exe"
+
+if not defined CLOUDFLARED_EXE if exist "C:\Program Files (x86)\cloudflared\cloudflared.exe" set "CLOUDFLARED_EXE=C:\Program Files (x86)\cloudflared\cloudflared.exe"
+
+if not defined CLOUDFLARED_EXE if exist "C:\Program Files\cloudflared\cloudflared.exe" set "CLOUDFLARED_EXE=C:\Program Files\cloudflared\cloudflared.exe"
+
+if not defined CLOUDFLARED_EXE goto :tunnel_not_found
+
+echo.
+echo Starting Cloudflare Tunnel...
+echo   NOTE: Always forward port 8080 - the Caddy port - not other ports!
+echo   This is a Quick Tunnel: the URL is random and changes every restart.
+echo   For a fixed URL you need your own domain - see the Cloudflare Tunnel
+echo   guide in the repo root.
+echo.
+start "cloudflared" cmd /k ""%CLOUDFLARED_EXE%" tunnel --url http://localhost:8080"
+echo   cloudflared will open in a new window. Check it for your public URL.
+echo.
+goto :skip_tunnel
+
+:tunnel_not_found
+echo.
+echo   [SKIPPED] cloudflared.exe not found. Install it first:
+echo     winget install Cloudflare.cloudflared
+echo   Then open a NEW terminal window (PATH needs a refresh) and re-run this
+echo   script. If it is installed but still not detected, set CLOUDFLARED_PATH
+echo   in start-config.local.bat to the folder containing cloudflared.exe.
+echo.
+
+:skip_tunnel
 echo.
 pause

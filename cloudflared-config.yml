@@ -1,0 +1,7 @@
+tunnel: persona-nexus
+credentials-file: C:\Users\MSI3090\AppData\Roaming\.cloudflared\persona-nexus.json
+
+ingress:
+  - hostname: persona-demo.pages.dev
+    service: http://localhost:8080
+  - service: http_status:404

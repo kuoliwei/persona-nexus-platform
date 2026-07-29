@@ -102,20 +102,24 @@ http://localhost:8080/chat      # 聊天室
 http://localhost:8080/api/*     # API gateway
 ```
 
-### 公網暴露（ngrok）
+### 公網暴露（Cloudflare Tunnel，2026-07-29 起改用）
 
 若要暴露到公網給內部同仁訪問：
 
 ```bash
-cd C:\Users\MSI3090\ngrok
-.\ngrok.exe http 8080
+& "C:\Program Files (x86)\cloudflared\cloudflared.exe" tunnel --url http://localhost:8080
 ```
 
-這會輸出公網 URL（例如 `https://budding-savings-broaden.ngrok-free.dev`），可分享給同仁。
+這會輸出公網 URL（例如 `https://ccd-loose-necessity-weed.trycloudflare.com`），可分享給同仁。
 
 ⚠️ **重要**：必須轉發 **8080（Caddy）**，不是其他 port。若轉發錯誤，會收到 404。
 
-⚠️ **免費 ngrok 限制**：URL 每 2 小時變一次，需重新啟動 ngrok。要固定 URL 需升級付費版。
+⚠️ **URL 每次重啟會變**（Quick Tunnel 的設計行為）。要固定 URL 需要自己的網域，見詳細教學。
+
+完整安裝步驟、疑難排解、固定網址設定見 [cloudflared公開服務教學.md](cloudflared公開服務教學.md)。
+
+> 原本用 ngrok，2026-07-29 因 Windows Defender 持續將 ngrok.exe 標記為 Trojan/PUA 隔離（已知的普遍問題，非個案，
+> 排除項對新版本無效）而改用 Cloudflare Tunnel。舊教學保留在 [ngrok公開服務教學.md](ngrok公開服務教學.md) 供對照。
 
 ---
 
